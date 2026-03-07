@@ -2,14 +2,9 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
 class ProgressBarWidget extends StatelessWidget {
-  final int progress; // 0–100
+  final int progress;
   final double height;
-
-  const ProgressBarWidget({
-    super.key,
-    required this.progress,
-    this.height = 3,
-  });
+  const ProgressBarWidget({super.key, required this.progress, this.height = 3});
 
   @override
   Widget build(BuildContext context) {

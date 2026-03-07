@@ -4,7 +4,6 @@ import '../theme/app_text_styles.dart';
 
 class QualityBadge extends StatelessWidget {
   final String quality;
-
   const QualityBadge({super.key, required this.quality});
 
   @override
@@ -17,10 +16,7 @@ class QualityBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(5),
         border: Border.all(color: color.withOpacity(0.4)),
       ),
-      child: Text(
-        quality,
-        style: AppTextStyles.qualityBadge.copyWith(color: color),
-      ),
+      child: Text(quality, style: AppTextStyles.qualityBadge.copyWith(color: color)),
     );
   }
 }

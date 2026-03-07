@@ -1,296 +1,141 @@
 import 'package:flutter/material.dart';
-import '../data/channels_data.dart';
+import 'package:provider/provider.dart';
+import '../providers/channel_provider.dart';
 import '../models/channel.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/category_chip_widget.dart';
 import '../widgets/channel_card.dart';
 import '../widgets/channel_list_tile.dart';
-import '../widgets/video_player_sheet.dart';
 
 enum _ViewMode { grid, list }
 
 class LiveTVScreen extends StatefulWidget {
-  final List<Channel> channels;
-  final void Function(int channelId) onFavoriteToggle;
+  final void Function(Channel) onChannelTap;
+  const LiveTVScreen({super.key, required this.onChannelTap});
 
-  const LiveTVScreen({
-    super.key,
-    required this.channels,
-    required this.onFavoriteToggle,
-  });
-
-  @override
-  State<LiveTVScreen> createState() => _LiveTVScreenState();
+  @override State<LiveTVScreen> createState() => _LiveTVScreenState();
 }
 
 class _LiveTVScreenState extends State<LiveTVScreen> {
-  String _selectedCategory = 'all';
   _ViewMode _viewMode = _ViewMode.grid;
-
-  List<Channel> get _filtered {
-    if (_selectedCategory == 'all') return widget.channels;
-    return widget.channels
-        .where((c) => c.category == _selectedCategory)
-        .toList();
-  }
-
-  void _openPlayer(Channel channel) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => VideoPlayerSheet(
-        channel: channel,
-        onFavoriteToggle: widget.onFavoriteToggle,
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
-    final liveCount = _filtered.where((c) => c.isLive).length;
+    return Consumer<ChannelProvider>(builder: (context, provider, _) {
+      final filtered = provider.filteredChannels;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // ── Header ──────────────────────────────────────────────
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('TV en Vivo',
-                        style: AppTextStyles.headlineLarge),
-                    RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '$liveCount',
-                            style: AppTextStyles.bodyMedium
-                                .copyWith(color: AppColors.success),
-                          ),
-                          TextSpan(
-                            text: ' canales en emisión',
-                            style: AppTextStyles.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // View mode toggle
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  children: [
-                    _ViewModeButton(
-                      icon: Icons.grid_view_rounded,
-                      isActive: _viewMode == _ViewMode.grid,
-                      onTap: () =>
-                          setState(() => _viewMode = _ViewMode.grid),
-                    ),
-                    _ViewModeButton(
-                      icon: Icons.list_rounded,
-                      isActive: _viewMode == _ViewMode.list,
-                      onTap: () =>
-                          setState(() => _viewMode = _ViewMode.list),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('TV en Vivo', style: AppTextStyles.headlineLarge),
+              RichText(text: TextSpan(children: [
+                TextSpan(text: '${filtered.length}', style: AppTextStyles.bodyMedium.copyWith(color: AppColors.success)),
+                TextSpan(text: ' canales disponibles', style: AppTextStyles.bodyMedium),
+              ])),
+            ])),
+            // View toggle
+            Container(
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.border)),
+              child: Row(children: [
+                _ViewBtn(icon: Icons.grid_view_rounded, active: _viewMode == _ViewMode.grid, onTap: () => setState(() => _viewMode = _ViewMode.grid)),
+                _ViewBtn(icon: Icons.list_rounded, active: _viewMode == _ViewMode.list, onTap: () => setState(() => _viewMode = _ViewMode.list)),
+              ]),
+            ),
+          ]),
         ),
 
-        // ── Category tabs ────────────────────────────────────────
+        // Categories
         const SizedBox(height: 16),
         SizedBox(
           height: 44,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            itemCount: ChannelsData.categories.length,
+            itemCount: provider.categories.length,
             separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final cat = ChannelsData.categories[index];
+            itemBuilder: (context, i) {
+              final cat = provider.categories[i];
               return CategoryChipWidget(
                 category: cat,
-                isSelected: _selectedCategory == cat.id,
-                onTap: () =>
-                    setState(() => _selectedCategory = cat.id),
+                isSelected: provider.selectedCategory == cat.id,
+                onTap: () => context.read<ChannelProvider>().setCategory(cat.id),
               );
             },
           ),
         ),
         const SizedBox(height: 16),
 
-        // ── Channel list ─────────────────────────────────────────
-        Expanded(
-          child: _filtered.isEmpty
-              ? const _EmptyState()
-              : _viewMode == _ViewMode.grid
-                  ? _GridView(
-                      channels: _filtered,
-                      onTap: _openPlayer,
-                      onFavoriteToggle: widget.onFavoriteToggle,
-                    )
-                  : _ListView(
-                      channels: _filtered,
-                      onTap: _openPlayer,
-                      onFavoriteToggle: widget.onFavoriteToggle,
-                    ),
-        ),
-      ],
-    );
+        // Channel list
+        Expanded(child: filtered.isEmpty
+            ? _EmptyState(isLoading: provider.isLoading, onRetry: provider.loadChannels)
+            : _viewMode == _ViewMode.grid
+                ? _Grid(channels: filtered, onTap: widget.onChannelTap, provider: provider)
+                : _List(channels: filtered, onTap: widget.onChannelTap, provider: provider)),
+      ]);
+    });
   }
 }
 
-// ── Grid ───────────────────────────────────────────────────────────────────────
-
-class _GridView extends StatelessWidget {
+class _Grid extends StatelessWidget {
   final List<Channel> channels;
   final void Function(Channel) onTap;
-  final void Function(int) onFavoriteToggle;
-
-  const _GridView({
-    required this.channels,
-    required this.onTap,
-    required this.onFavoriteToggle,
-  });
+  final ChannelProvider provider;
+  const _Grid({required this.channels, required this.onTap, required this.provider});
 
   @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.72,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: channels.length,
-      itemBuilder: (context, index) {
-        final ch = channels[index];
-        return ChannelCard(
-          channel: ch,
-          onTap: () => onTap(ch),
-          onFavoriteToggle: () => onFavoriteToggle(ch.id),
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => GridView.builder(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.78, crossAxisSpacing: 12, mainAxisSpacing: 12),
+    itemCount: channels.length,
+    itemBuilder: (_, i) {
+      final ch = channels[i];
+      return ChannelCard(channel: ch, onTap: () => onTap(ch), onFavoriteToggle: () => context.read<ChannelProvider>().toggleFavorite(ch.id));
+    },
+  );
 }
 
-// ── List ───────────────────────────────────────────────────────────────────────
-
-class _ListView extends StatelessWidget {
+class _List extends StatelessWidget {
   final List<Channel> channels;
   final void Function(Channel) onTap;
-  final void Function(int) onFavoriteToggle;
-
-  const _ListView({
-    required this.channels,
-    required this.onTap,
-    required this.onFavoriteToggle,
-  });
+  final ChannelProvider provider;
+  const _List({required this.channels, required this.onTap, required this.provider});
 
   @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: channels.length,
-      itemBuilder: (context, index) {
-        final ch = channels[index];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: ChannelListTile(
-            channel: ch,
-            onTap: () => onTap(ch),
-            onFavoriteToggle: () => onFavoriteToggle(ch.id),
-          ),
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => ListView.builder(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    itemCount: channels.length,
+    itemBuilder: (_, i) {
+      final ch = channels[i];
+      return Padding(padding: const EdgeInsets.only(bottom: 8), child: ChannelListTile(channel: ch, onTap: () => onTap(ch), onFavoriteToggle: () => context.read<ChannelProvider>().toggleFavorite(ch.id)));
+    },
+  );
 }
 
-// ── View mode button ───────────────────────────────────────────────────────────
-
-class _ViewModeButton extends StatelessWidget {
+class _ViewBtn extends StatelessWidget {
   final IconData icon;
-  final bool isActive;
+  final bool active;
   final VoidCallback onTap;
-
-  const _ViewModeButton({
-    required this.icon,
-    required this.isActive,
-    required this.onTap,
-  });
-
+  const _ViewBtn({required this.icon, required this.active, required this.onTap});
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: isActive
-              ? AppColors.accentPurple.withOpacity(0.25)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: isActive ? AppColors.accentViolet : AppColors.textMuted,
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => GestureDetector(onTap: onTap, child: AnimatedContainer(duration: const Duration(milliseconds: 200), padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: active ? AppColors.accentPurple.withOpacity(0.25) : Colors.transparent, borderRadius: BorderRadius.circular(8)), child: Icon(icon, size: 18, color: active ? AppColors.accentViolet : AppColors.textMuted)));
 }
-
-// ── Empty state ────────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
+  final bool isLoading;
+  final VoidCallback onRetry;
+  const _EmptyState({required this.isLoading, required this.onRetry});
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: const Icon(
-              Icons.tv_off_rounded,
-              size: 32,
-              color: AppColors.textDisabled,
-            ),
-          ),
+  Widget build(BuildContext context) => Center(child: isLoading
+      ? const CircularProgressIndicator(color: AppColors.accentPurple, strokeWidth: 2)
+      : Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('📭', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 12),
+          const Text('Sin canales en esta categoría', style: AppTextStyles.headlineSmall),
           const SizedBox(height: 16),
-          const Text('Sin canales disponibles',
-              style: AppTextStyles.headlineSmall),
-          const SizedBox(height: 6),
-          const Text('Prueba con otra categoría',
-              style: AppTextStyles.bodyMedium),
-        ],
-      ),
-    );
-  }
+          GestureDetector(onTap: onRetry, child: Container(padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10), decoration: BoxDecoration(gradient: AppColors.primaryGradient, borderRadius: BorderRadius.circular(10)), child: const Text('Recargar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)))),
+        ]));
 }

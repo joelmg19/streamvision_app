@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/channel_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 
@@ -44,11 +46,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     border: Border.all(
                         color: AppColors.accentPurple.withOpacity(0.3)),
                   ),
-                  child: const Icon(
-                    Icons.settings_rounded,
-                    color: AppColors.accentViolet,
-                    size: 22,
-                  ),
+                  child: const Icon(Icons.settings_rounded,
+                      color: AppColors.accentViolet, size: 22),
                 ),
                 const SizedBox(width: 14),
                 const Column(
@@ -64,7 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
 
-        // ── Quality selector ─────────────────────────────────────
+        // ── Quality ──────────────────────────────────────────────
         SliverToBoxAdapter(
           child: _SettingsSection(
             icon: Icons.tv_rounded,
@@ -73,10 +72,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Selecciona la calidad predeterminada',
-                  style: AppTextStyles.bodySmall,
-                ),
+                Text('Selecciona la calidad predeterminada',
+                    style: AppTextStyles.bodySmall),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,
@@ -91,13 +88,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
                           gradient: isSelected
-                              ? LinearGradient(
-                                  colors: [
-                                    AppColors.accentPurple
-                                        .withOpacity(0.35),
-                                    AppColors.accentCyan.withOpacity(0.2),
-                                  ],
-                                )
+                              ? LinearGradient(colors: [
+                                  AppColors.accentPurple.withOpacity(0.35),
+                                  AppColors.accentCyan.withOpacity(0.2),
+                                ])
                               : null,
                           color: isSelected
                               ? null
@@ -149,32 +143,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     Text('Límite de descarga',
                         style: AppTextStyles.bodySmall),
-                    Text(
-                      '${_bandwidth.round()} Mbps',
-                      style: AppTextStyles.labelMedium.copyWith(
-                        color: AppColors.accentCyan,
-                      ),
-                    ),
+                    Text('${_bandwidth.round()} Mbps',
+                        style: AppTextStyles.labelMedium
+                            .copyWith(color: AppColors.accentCyan)),
                   ],
                 ),
                 const SizedBox(height: 6),
                 SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 7),
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 7),
                     overlayShape: SliderComponentShape.noOverlay,
                     activeTrackColor: AppColors.accentPurple,
-                    inactiveTrackColor:
-                        Colors.white.withOpacity(0.12),
+                    inactiveTrackColor: Colors.white.withOpacity(0.12),
                     thumbColor: Colors.white,
                   ),
                   child: Slider(
                     value: _bandwidth,
                     min: 1,
                     max: 100,
-                    onChanged: (v) =>
-                        setState(() => _bandwidth = v),
+                    onChanged: (v) => setState(() => _bandwidth = v),
                   ),
                 ),
                 Row(
@@ -194,19 +183,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: _SettingsSection(
             icon: Icons.language_rounded,
             iconColor: AppColors.warning,
-            title: 'Idioma',
+            title: 'Idioma de Interfaz',
             child: Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
-                _LanguageOption(code: 'es', flag: '🇪🇸', label: 'Español'),
-                _LanguageOption(code: 'en', flag: '🇬🇧', label: 'English'),
-                _LanguageOption(code: 'fr', flag: '🇫🇷', label: 'Français'),
-                _LanguageOption(code: 'de', flag: '🇩🇪', label: 'Deutsch'),
+                ('es', '🇪🇸', 'Español'),
+                ('en', '🇬🇧', 'English'),
+                ('fr', '🇫🇷', 'Français'),
+                ('de', '🇩🇪', 'Deutsch'),
+                ('pt', '🇧🇷', 'Português'),
               ].map((opt) {
-                final isSelected = _language == opt.code;
+                final isSelected = _language == opt.$1;
                 return GestureDetector(
-                  onTap: () =>
-                      setState(() => _language = opt.code),
+                  onTap: () => setState(() => _language = opt.$1),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(
@@ -230,17 +220,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               size: 12, color: AppColors.warning),
                           const SizedBox(width: 4),
                         ],
-                        Text(opt.flag,
+                        Text(opt.$2,
                             style: const TextStyle(fontSize: 15)),
                         const SizedBox(width: 6),
-                        Text(
-                          opt.label,
-                          style: AppTextStyles.labelMedium.copyWith(
-                            color: isSelected
-                                ? AppColors.warning
-                                : AppColors.textSecondary,
-                          ),
-                        ),
+                        Text(opt.$3,
+                            style: AppTextStyles.labelMedium.copyWith(
+                              color: isSelected
+                                  ? AppColors.warning
+                                  : AppColors.textSecondary,
+                            )),
                       ],
                     ),
                   ),
@@ -250,7 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
 
-        // ── Toggles ──────────────────────────────────────────────
+        // ── Playback toggles ─────────────────────────────────────
         SliverToBoxAdapter(
           child: _SettingsSection(
             icon: Icons.play_circle_rounded,
@@ -260,22 +248,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 _ToggleRow(
                   title: 'Reproducción automática',
-                  subtitle: 'Inicia el canal seleccionado automáticamente',
+                  subtitle: 'Inicia el canal automáticamente',
                   value: _autoplay,
                   onChanged: (v) => setState(() => _autoplay = v),
                 ),
                 _ToggleRow(
                   title: 'Alta definición',
-                  subtitle: 'Priorizar streams en HD o superior',
+                  subtitle: 'Priorizar streams HD o superior',
                   value: _hd,
                   onChanged: (v) => setState(() => _hd = v),
                 ),
                 _ToggleRow(
-                  title: 'Aceleración por hardware',
+                  title: 'Aceleración hardware',
                   subtitle: 'Mejor rendimiento en dispositivos compatibles',
                   value: _hardwareAccel,
-                  onChanged: (v) =>
-                      setState(() => _hardwareAccel = v),
+                  onChanged: (v) => setState(() => _hardwareAccel = v),
                 ),
                 _ToggleRow(
                   title: 'Subtítulos automáticos',
@@ -300,18 +287,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Notificaciones push',
                   subtitle: 'Avisos sobre programas favoritos',
                   value: _notifications,
-                  onChanged: (v) =>
-                      setState(() => _notifications = v),
+                  onChanged: (v) => setState(() => _notifications = v),
                 ),
                 _ToggleRow(
                   title: 'Control parental',
                   subtitle: 'Bloquear contenido para adultos',
                   value: _parentalControl,
-                  onChanged: (v) =>
-                      setState(() => _parentalControl = v),
+                  onChanged: (v) => setState(() => _parentalControl = v),
                   showDivider: false,
                 ),
               ],
+            ),
+          ),
+        ),
+
+        // ── Source info ──────────────────────────────────────────
+        SliverToBoxAdapter(
+          child: _SettingsSection(
+            icon: Icons.source_rounded,
+            iconColor: AppColors.accentCyan,
+            title: 'Fuente de Contenido',
+            child: Consumer<ChannelProvider>(
+              builder: (_, provider, __) => Column(
+                children: [
+                  _InfoRow(
+                      label: 'Fuente',
+                      value: 'Free-TV/IPTV (GitHub)'),
+                  _InfoRow(
+                      label: 'Canales cargados',
+                      value: provider.isLoaded
+                          ? '${provider.allChannels.length}'
+                          : provider.isLoading
+                              ? 'Cargando...'
+                              : 'No cargado'),
+                  _InfoRow(
+                      label: 'Estado',
+                      value: provider.isLoaded
+                          ? '✅ Conectado'
+                          : provider.isLoading
+                              ? '⏳ Cargando'
+                              : provider.hasError
+                                  ? '❌ Error'
+                                  : '⏸ Inactivo'),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: AppColors.primaryGradient,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => provider.loadChannels(),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 13),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.refresh_rounded,
+                                    color: Colors.white, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Recargar playlist',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -325,55 +380,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 ...[
-                  {'label': 'Versión', 'value': '3.2.1'},
-                  {'label': 'Build', 'value': '20260225'},
-                  {'label': 'Licencia', 'value': 'Premium'},
-                  {'label': 'Canales activos', 'value': '30'},
+                  ('Versión', '3.2.1'),
+                  ('Build', '20260306'),
+                  ('Licencia', 'Open Source'),
+                  ('Repositorio fuente', 'Free-TV/IPTV'),
                 ].map(
                   (item) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(item['label']!,
-                            style: AppTextStyles.bodyMedium),
-                        Text(
-                          item['value']!,
-                          style: AppTextStyles.labelMedium.copyWith(
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
+                        Text(item.$1, style: AppTextStyles.bodyMedium),
+                        Text(item.$2,
+                            style: AppTextStyles.labelMedium
+                                .copyWith(color: AppColors.textPrimary)),
                       ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  width: double.infinity,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: AppColors.primaryGradient,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {},
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 13),
-                          child: Text(
-                            'Buscar actualizaciones',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      ),
                     ),
                   ),
                 ),
@@ -388,7 +409,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-// ── Settings Section ───────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 class _SettingsSection extends StatelessWidget {
   final IconData icon;
@@ -434,22 +455,14 @@ class _SettingsSection extends StatelessWidget {
                 ],
               ),
             ),
-            Container(
-              height: 1,
-              color: AppColors.border,
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: child,
-            ),
+            Container(height: 1, color: AppColors.border),
+            Padding(padding: const EdgeInsets.all(16), child: child),
           ],
         ),
       ),
     );
   }
 }
-
-// ── Toggle Row ─────────────────────────────────────────────────────────────────
 
 class _ToggleRow extends StatelessWidget {
   final String title;
@@ -491,7 +504,7 @@ class _ToggleRow extends StatelessWidget {
               inactiveTrackColor: Colors.white.withOpacity(0.12),
               inactiveThumbColor: Colors.white.withOpacity(0.6),
               trackOutlineColor:
-                  MaterialStateProperty.all(Colors.transparent),
+                  WidgetStateProperty.all(Colors.transparent),
             ),
           ],
         ),
@@ -505,16 +518,24 @@ class _ToggleRow extends StatelessWidget {
   }
 }
 
-// ── Helper types ───────────────────────────────────────────────────────────────
-
-class _LanguageOption {
-  final String code;
-  final String flag;
+class _InfoRow extends StatelessWidget {
   final String label;
+  final String value;
+  const _InfoRow({required this.label, required this.value});
 
-  const _LanguageOption({
-    required this.code,
-    required this.flag,
-    required this.label,
-  });
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: AppTextStyles.bodyMedium),
+          Text(value,
+              style: AppTextStyles.labelMedium
+                  .copyWith(color: AppColors.textPrimary)),
+        ],
+      ),
+    );
+  }
 }

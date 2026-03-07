@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/channel.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import 'live_badge.dart';
 import 'quality_badge.dart';
+import 'channel_logo.dart';
 
 class FeaturedBanner extends StatefulWidget {
   final List<Channel> channels;
@@ -31,11 +33,12 @@ class _FeaturedBannerState extends State<FeaturedBanner> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.channels.isEmpty) return const SizedBox(height: 200);
+
     return SizedBox(
       height: 300,
       child: Stack(
         children: [
-          // ── PageView ──────────────────────────────────────────
           PageView.builder(
             controller: _pageController,
             itemCount: widget.channels.length,
@@ -45,8 +48,7 @@ class _FeaturedBannerState extends State<FeaturedBanner> {
               return _BannerPage(channel: ch, onPlay: widget.onPlay);
             },
           ),
-
-          // ── Dot indicators ────────────────────────────────────
+          // Dot indicators
           Positioned(
             bottom: 16,
             right: 16,
@@ -54,13 +56,11 @@ class _FeaturedBannerState extends State<FeaturedBanner> {
               children: List.generate(widget.channels.length, (i) {
                 final isActive = i == _currentIndex;
                 return GestureDetector(
-                  onTap: () {
-                    _pageController.animateToPage(
-                      i,
-                      duration: const Duration(milliseconds: 350),
-                      curve: Curves.easeInOut,
-                    );
-                  },
+                  onTap: () => _pageController.animateToPage(
+                    i,
+                    duration: const Duration(milliseconds: 350),
+                    curve: Curves.easeInOut,
+                  ),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 250),
                     width: isActive ? 22 : 7,
@@ -93,18 +93,19 @@ class _BannerPage extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Background image
-        Image.network(
-          channel.thumbnailUrl,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(color: AppColors.surface),
-          loadingBuilder: (_, child, progress) {
-            if (progress == null) return child;
-            return Container(color: AppColors.surface);
-          },
-        ),
+        // Background: real logo or gradient fallback
+        channel.logoUrl != null && channel.logoUrl!.isNotEmpty
+            ? CachedNetworkImage(
+                imageUrl: channel.logoUrl!,
+                fit: BoxFit.cover,
+                color: Colors.black54,
+                colorBlendMode: BlendMode.darken,
+                errorWidget: (_, __, ___) => _GradientBg(channel: channel),
+                placeholder: (_, __) => _GradientBg(channel: channel),
+              )
+            : _GradientBg(channel: channel),
 
-        // Gradient overlays
+        // Bottom gradient overlay
         const DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -135,74 +136,40 @@ class _BannerPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Badges
-              Row(
-                children: [
-                  if (channel.isLive) ...[
-                    const LiveBadge(),
-                    const SizedBox(width: 8),
-                  ],
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.accentPurple.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: AppColors.accentPurple.withOpacity(0.4),
-                      ),
-                    ),
-                    child: Text(
-                      'DESTACADO',
-                      style: AppTextStyles.liveBadge
-                          .copyWith(color: AppColors.accentViolet),
-                    ),
+              Row(children: [
+                const LiveBadge(),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.accentPurple.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppColors.accentPurple.withOpacity(0.4)),
                   ),
-                ],
-              ),
+                  child: Text(
+                    channel.groupTitle?.toUpperCase() ?? 'DESTACADO',
+                    style: AppTextStyles.liveBadge.copyWith(color: AppColors.accentViolet),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ]),
               const SizedBox(height: 10),
-
-              // Title
-              Text(
-                channel.name,
-                style: AppTextStyles.displayMedium,
-              ),
+              Text(channel.name, style: AppTextStyles.displayMedium),
               const SizedBox(height: 4),
-
-              // Program
-              RichText(
-                text: TextSpan(
-                  text: 'Ahora: ',
-                  style: AppTextStyles.bodyMedium,
-                  children: [
-                    TextSpan(
-                      text: channel.currentProgram,
-                      style: AppTextStyles.bodyMedium
-                          .copyWith(color: AppColors.textPrimary),
-                    ),
-                  ],
-                ),
+              Text(
+                channel.country.isNotEmpty
+                    ? '${_flagEmoji(channel.country)}  ${channel.country}'
+                    : channel.description,
+                style: AppTextStyles.bodyMedium,
               ),
-              if (channel.description.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  channel.description,
-                  style: AppTextStyles.bodySmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
               const SizedBox(height: 14),
-
-              // Action buttons
               Row(
                 children: [
-                  // Play button
                   GestureDetector(
                     onTap: () => onPlay(channel),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 22, vertical: 11),
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 11),
                       decoration: BoxDecoration(
                         gradient: AppColors.primaryGradient,
                         borderRadius: BorderRadius.circular(12),
@@ -217,51 +184,17 @@ class _BannerPage extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.play_arrow_rounded,
-                              color: Colors.white, size: 18),
+                          Icon(Icons.play_arrow_rounded, color: Colors.white, size: 18),
                           SizedBox(width: 6),
-                          Text(
-                            'Ver ahora',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
+                          Text('Ver ahora',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14)),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-
-                  // Info button
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 22, vertical: 11),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: Colors.white.withOpacity(0.1)),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.info_outline_rounded,
-                            color: AppColors.textPrimary, size: 16),
-                        SizedBox(width: 6),
-                        Text(
-                          'Más info',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
                   const Spacer(),
                   QualityBadge(quality: channel.quality),
                 ],
@@ -270,6 +203,45 @@ class _BannerPage extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  String _flagEmoji(String countryCode) {
+    const flags = {
+      'US': '🇺🇸', 'GB': '🇬🇧', 'ES': '🇪🇸', 'FR': '🇫🇷', 'DE': '🇩🇪',
+      'IT': '🇮🇹', 'PT': '🇵🇹', 'BR': '🇧🇷', 'MX': '🇲🇽', 'AR': '🇦🇷',
+      'CO': '🇨🇴', 'CL': '🇨🇱', 'PE': '🇵🇪', 'RU': '🇷🇺', 'JP': '🇯🇵',
+      'CN': '🇨🇳', 'IN': '🇮🇳', 'AU': '🇦🇺', 'CA': '🇨🇦', 'QA': '🇶🇦',
+      'AE': '🇦🇪', 'TR': '🇹🇷', 'INT': '🌐',
+    };
+    return flags[countryCode] ?? '📺';
+  }
+}
+
+class _GradientBg extends StatelessWidget {
+  final Channel channel;
+  const _GradientBg({required this.channel});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = AppColors.channelGradientStart(channel.id);
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color.withOpacity(0.6), AppColors.background],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Center(
+        child: ChannelLogo(
+          channelId: channel.id,
+          logoText: channel.logo,
+          logoUrl: channel.logoUrl,
+          size: 80,
+          borderRadius: 20,
+        ),
+      ),
     );
   }
 }
