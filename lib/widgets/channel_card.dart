@@ -72,24 +72,13 @@ class _Thumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = AppColors.channelGradientStart(channel.id);
-
     return AspectRatio(
       aspectRatio: 16 / 9,
       child: Stack(fit: StackFit.expand, children: [
-        // Background — logo or gradient
         channel.logoUrl != null && channel.logoUrl!.isNotEmpty
-            ? CachedNetworkImage(
-                imageUrl: channel.logoUrl!,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => _gradientBg(color),
-                errorWidget: (_, __, ___) => _gradientBg(color),
-              )
+            ? CachedNetworkImage(imageUrl: channel.logoUrl!, fit: BoxFit.contain, placeholder: (_, __) => _gradientBg(color), errorWidget: (_, __, ___) => _gradientBg(color))
             : _gradientBg(color),
-
-        // Dark overlay
         const DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.transparent, Color(0xCC000000)], begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0.4, 1.0]))),
-
-        // Top badges
         Positioned(
           top: 8, left: 8, right: 8,
           child: Row(children: [
@@ -98,8 +87,6 @@ class _Thumbnail extends StatelessWidget {
             QualityBadge(quality: channel.quality),
           ]),
         ),
-
-        // Play button
         Center(child: Container(
           width: 44, height: 44,
           decoration: BoxDecoration(gradient: AppColors.primaryGradient, shape: BoxShape.circle, boxShadow: [BoxShadow(color: AppColors.accentPurple.withOpacity(0.5), blurRadius: 16)]),
@@ -110,9 +97,7 @@ class _Thumbnail extends StatelessWidget {
   }
 
   Widget _gradientBg(Color color) => Container(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(colors: [color.withOpacity(0.8), color.withOpacity(0.3)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-    ),
+    decoration: BoxDecoration(gradient: LinearGradient(colors: [color.withOpacity(0.8), color.withOpacity(0.3)], begin: Alignment.topLeft, end: Alignment.bottomRight)),
     child: Center(child: Text(channel.logo.length > 3 ? channel.logo.substring(0, 3) : channel.logo, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white70))),
   );
 }

@@ -14,6 +14,10 @@ dependencies:
   cached_network_image: ^3.3.1
   provider: ^6.1.2
   shared_preferences: ^2.2.3
+  # Video playback - media_kit supports HLS/m3u8 natively on Android/iOS/desktop
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
 
 dev_dependencies:
   flutter_test:

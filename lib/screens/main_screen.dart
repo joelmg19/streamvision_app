@@ -28,7 +28,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-
+    // Fetch real channels on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ChannelProvider>().loadChannels();
     });
@@ -40,7 +40,6 @@ class _MainScreenState extends State<MainScreen> {
     super.dispose();
   }
 
-  // 🔧 CORREGIDO AQUÍ
   void _openPlayer(Channel channel) {
     showModalBottomSheet(
       context: context,
@@ -48,7 +47,7 @@ class _MainScreenState extends State<MainScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => VideoPlayerSheet(
         channel: channel,
-        isFavorite: channel.isFavorite, // ← parámetro que faltaba
+        isFavorite: context.read<ChannelProvider>().isFavorite(channel.id),
         onFavoriteToggle: (id) =>
             context.read<ChannelProvider>().toggleFavorite(id),
       ),
@@ -90,7 +89,9 @@ class _MainScreenState extends State<MainScreen> {
             Expanded(
               child: Consumer<ChannelProvider>(
                 builder: (context, provider, _) {
-                  if (_searchActive && provider.searchQuery.isNotEmpty) {
+                  // Show search results when active
+                  if (_searchActive &&
+                      provider.searchQuery.isNotEmpty) {
                     return _SearchResults(
                       channels: provider.filteredChannels,
                       query: provider.searchQuery,
@@ -130,7 +131,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
-// ── Top Bar ─────────────────────────────────────────
+// ── Top Bar ────────────────────────────────────────────────────────────────────
 
 class _TopBar extends StatelessWidget {
   final TextEditingController searchController;
@@ -166,7 +167,7 @@ class _TopBar extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
               child:
-              const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
+                  const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 10),
             const Expanded(
@@ -208,13 +209,22 @@ class _TopBar extends StatelessWidget {
                         decoration: const InputDecoration(
                           hintText: 'Buscar canales, categorías...',
                           hintStyle:
-                          TextStyle(color: AppColors.textMuted, fontSize: 14),
+                              TextStyle(color: AppColors.textMuted, fontSize: 14),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),
                     ),
+                    if (searchController.text.isNotEmpty)
+                      GestureDetector(
+                        onTap: onClearSearch,
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.close_rounded,
+                              size: 16, color: AppColors.textMuted),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -246,13 +256,61 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
+          if (!searchActive) ...[
+            const SizedBox(width: 8),
+            // Live indicator with channel count
+            Consumer<ChannelProvider>(
+              builder: (_, provider, __) => Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: provider.isLoading
+                    ? const Center(
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.accentPurple,
+                          ),
+                        ),
+                      )
+                    : Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          const Icon(Icons.tv_rounded,
+                              size: 18, color: AppColors.textSecondary),
+                          if (provider.isLoaded && provider.allChannels.isNotEmpty)
+                            Positioned(
+                              top: 5,
+                              right: 5,
+                              child: Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: AppColors.success,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: AppColors.background, width: 1.5),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-// ── Bottom Navigation ──────────────────────────────
+// ── Bottom Nav ─────────────────────────────────────────────────────────────────
 
 class _BottomNav extends StatelessWidget {
   final int currentIndex;
@@ -283,26 +341,37 @@ class _BottomNav extends StatelessWidget {
           children: List.generate(_items.length, (i) {
             final item = _items[i];
             final isActive = currentIndex == i;
-
             return GestureDetector(
               onTap: () => onTap(i),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isActive ? item.activeIcon : item.icon,
-                    size: 22,
-                    color: isActive ? Colors.white : AppColors.textMuted,
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    item.label,
-                    style: TextStyle(
-                      fontSize: 10,
+              behavior: HitTestBehavior.opaque,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  gradient: isActive ? AppColors.primaryGradient : null,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isActive ? item.activeIcon : item.icon,
+                      size: 22,
                       color: isActive ? Colors.white : AppColors.textMuted,
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 3),
+                    Text(
+                      item.label,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight:
+                            isActive ? FontWeight.w600 : FontWeight.w400,
+                        color: isActive ? Colors.white : AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }),
@@ -316,11 +385,10 @@ class _NavItem {
   final IconData icon;
   final IconData activeIcon;
   final String label;
-
   const _NavItem(this.icon, this.activeIcon, this.label);
 }
 
-// ── Search Results ────────────────────────────────
+// ── Search Results ─────────────────────────────────────────────────────────────
 
 class _SearchResults extends StatelessWidget {
   final List<Channel> channels;
@@ -352,21 +420,34 @@ class _SearchResults extends StatelessWidget {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: channels.length,
-      itemBuilder: (context, index) {
-        final ch = channels[index];
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: ChannelListTile(
-            channel: ch,
-            onTap: () => onTap(ch),
-            onFavoriteToggle: () => onFavoriteToggle(ch.id),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+          child: Text(
+            '${channels.length} resultado${channels.length != 1 ? "s" : ""} para "$query"',
+            style: AppTextStyles.bodyMedium,
           ),
-        );
-      },
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: channels.length,
+            itemBuilder: (context, index) {
+              final ch = channels[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ChannelListTile(
+                  channel: ch,
+                  onTap: () => onTap(ch),
+                  onFavoriteToggle: () => onFavoriteToggle(ch.id),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
