@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -28,10 +29,11 @@ class VideoPlayerSheet extends StatefulWidget {
 class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   late final Player _player;
   late final VideoController _controller;
-  bool _isFullscreen = false;
   bool _isCopied = false;
   bool _hasError = false;
   String _errorMessage = '';
+  bool _isLoading = true;
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
@@ -42,46 +44,114 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   }
 
   Future<void> _playStream() async {
+    if (!mounted) return;
+    setState(() {
+      _hasError = false;
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    _timeoutTimer?.cancel();
+
     final url = widget.channel.streamUrl;
     if (url == null || url.isEmpty) {
-      setState(() {
-        _hasError = true;
-        _errorMessage = 'No hay URL de stream disponible';
-      });
-      return;
-    }
-    try {
-      await _player.open(Media(url));
-    } catch (e) {
       if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMessage = 'No se pudo cargar el stream: $e';
+          _isLoading = false;
+          _errorMessage = 'No hay URL de stream disponible para este canal.';
+        });
+      }
+      return;
+    }
+
+    // Listen for player errors
+    _player.stream.error.listen((err) {
+      if (mounted && err.isNotEmpty && !_hasError) {
+        _timeoutTimer?.cancel();
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+          _errorMessage = 'Stream no disponible.\nPuede estar caído o geobloqueado.';
+        });
+      }
+    });
+
+    // Once playing starts, cancel timeout and hide spinner
+    _player.stream.playing.listen((playing) {
+      if (playing && mounted && _isLoading) {
+        _timeoutTimer?.cancel();
+        setState(() => _isLoading = false);
+      }
+    });
+
+    // Video params ready = frame is rendering
+    _player.stream.videoParams.listen((_) {
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+      }
+    });
+
+    try {
+      await _player.open(Media(url));
+
+      // If after 15s still not playing → dead stream
+      _timeoutTimer = Timer(const Duration(seconds: 15), () {
+        if (mounted && !_hasError) {
+          if (!_player.state.playing) {
+            setState(() {
+              _hasError = true;
+              _isLoading = false;
+              _errorMessage = 'El canal no responde.\nPuede estar inactivo o geobloqueado.';
+            });
+          } else {
+            if (mounted) setState(() => _isLoading = false);
+          }
+        }
+      });
+    } catch (e) {
+      _timeoutTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+          _errorMessage = 'Error al conectar con el stream.';
         });
       }
     }
   }
 
-  void _toggleFullscreen() {
-    setState(() => _isFullscreen = !_isFullscreen);
-    if (_isFullscreen) {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-      ]);
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    }
+  void _enterFullscreen(BuildContext context) {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: true,
+        barrierColor: Colors.black,
+        pageBuilder: (_, __, ___) => _FullscreenPlayer(
+          controller: _controller,
+          player: _player,
+          channel: widget.channel,
+          onExit: () {
+            SystemChrome.setPreferredOrientations([
+              DeviceOrientation.portraitUp,
+              DeviceOrientation.portraitDown,
+            ]);
+            SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
   }
 
   void _copyStreamUrl() async {
     if (widget.channel.streamUrl != null) {
       await Clipboard.setData(ClipboardData(text: widget.channel.streamUrl!));
+      if (!mounted) return;
       setState(() => _isCopied = true);
       await Future.delayed(const Duration(seconds: 2));
       if (mounted) setState(() => _isCopied = false);
@@ -90,27 +160,13 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
 
   @override
   void dispose() {
+    _timeoutTimer?.cancel();
     _player.dispose();
-    // Restore orientation when closing
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isFullscreen) {
-      return _FullscreenPlayer(
-        controller: _controller,
-        player: _player,
-        channel: widget.channel,
-        onExitFullscreen: _toggleFullscreen,
-      );
-    }
-
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.surface,
@@ -129,16 +185,8 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
             ),
           ),
 
-          // ── Video Player ──────────────────────────────────────
-          _VideoArea(
-            controller: _controller,
-            player: _player,
-            channel: widget.channel,
-            hasError: _hasError,
-            errorMessage: _errorMessage,
-            onFullscreen: _toggleFullscreen,
-            onRetry: _playStream,
-          ),
+          // ── VIDEO AREA ────────────────────────────────────────
+          _buildVideoArea(context),
 
           // ── Channel Header ────────────────────────────────────
           Padding(
@@ -146,81 +194,81 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
             child: Row(children: [
               ChannelLogo(channel: widget.channel, size: 48, borderRadius: 12),
               const SizedBox(width: 14),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(widget.channel.name, style: AppTextStyles.headlineMedium),
-                const SizedBox(height: 4),
-                Row(children: [
-                  if (widget.channel.isLive) ...[const LiveBadge(), const SizedBox(width: 8)],
-                  QualityBadge(quality: widget.channel.quality),
-                  if (widget.channel.country.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(5),
-                        border: Border.all(color: AppColors.border),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(widget.channel.name,
+                    style: AppTextStyles.headlineMedium,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    if (widget.channel.isLive) ...[const LiveBadge(), const SizedBox(width: 8)],
+                    QualityBadge(quality: widget.channel.quality),
+                    if (widget.channel.country.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Text(widget.channel.country, style: AppTextStyles.labelSmall),
                       ),
-                      child: Text(widget.channel.country, style: AppTextStyles.labelSmall),
-                    ),
-                  ],
+                    ],
+                  ]),
                 ]),
-              ])),
-              // Playback status indicator
-              StreamBuilder(
-                stream: _player.stream.buffering,
-                builder: (_, snap) {
-                  final buffering = snap.data ?? false;
-                  return Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
+              ),
+              GestureDetector(
+                onTap: () => widget.onFavoriteToggle(widget.channel.id),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(
+                    color: widget.isFavorite
+                        ? AppColors.warning.withOpacity(0.15)
+                        : Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
                       color: widget.isFavorite
-                          ? AppColors.warning.withOpacity(0.15)
-                          : Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: widget.isFavorite
                           ? AppColors.warning.withOpacity(0.3)
-                          : AppColors.border),
+                          : AppColors.border,
                     ),
-                    child: buffering
-                        ? const Padding(
-                            padding: EdgeInsets.all(10),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.accentPurple,
-                            ),
-                          )
-                        : GestureDetector(
-                            onTap: () => widget.onFavoriteToggle(widget.channel.id),
-                            child: Icon(
-                              widget.isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
-                              size: 20,
-                              color: widget.isFavorite ? AppColors.warning : AppColors.textMuted,
-                            ),
-                          ),
-                  );
-                },
+                  ),
+                  child: Icon(
+                    widget.isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
+                    size: 20,
+                    color: widget.isFavorite ? AppColors.warning : AppColors.textMuted,
+                  ),
+                ),
               ),
             ]),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
 
           // ── Playback Controls ─────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: _PlaybackControls(player: _player, onCopyUrl: _copyStreamUrl, isCopied: _isCopied),
-          ),
+          if (!_hasError)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _PlaybackControls(
+                player: _player,
+                onCopyUrl: _copyStreamUrl,
+                isCopied: _isCopied,
+              ),
+            ),
 
-          // ── Channel Info ──────────────────────────────────────
+          // ── Info ──────────────────────────────────────────────
           if (widget.channel.groupTitle != null || widget.channel.currentProgram.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Column(children: [
                 if (widget.channel.groupTitle != null)
-                  _InfoRow(icon: Icons.category_rounded, label: 'Categoría', value: widget.channel.groupTitle!),
-                if (widget.channel.currentProgram.isNotEmpty && widget.channel.currentProgram != 'En directo')
-                  _InfoRow(icon: Icons.tv_rounded, label: 'Programa', value: widget.channel.currentProgram),
+                  _InfoRow(icon: Icons.category_rounded,
+                    label: 'Categoría', value: widget.channel.groupTitle!),
+                if (widget.channel.currentProgram.isNotEmpty &&
+                    widget.channel.currentProgram != 'En directo')
+                  _InfoRow(icon: Icons.tv_rounded,
+                    label: 'Programa', value: widget.channel.currentProgram),
               ]),
             ),
 
@@ -229,272 +277,405 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
       ),
     );
   }
-}
 
-// ── Video Area ─────────────────────────────────────────────────────────────────
+  /// CRITICAL FIX: Use LayoutBuilder to get exact pixel dimensions and pass
+  /// explicit width/height to the Video widget.
+  /// Without this, the native video renderer has no bounds → black screen.
+  Widget _buildVideoArea(BuildContext ctx) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final vw = constraints.maxWidth;
+        final vh = vw * 9 / 16; // 16:9 aspect ratio
 
-class _VideoArea extends StatelessWidget {
-  final VideoController controller;
-  final Player player;
-  final Channel channel;
-  final bool hasError;
-  final String errorMessage;
-  final VoidCallback onFullscreen;
-  final VoidCallback onRetry;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: vw,
+            height: vh,
+            child: ColoredBox(
+              color: Colors.black,
+              child: Stack(children: [
 
-  const _VideoArea({
-    required this.controller,
-    required this.player,
-    required this.channel,
-    required this.hasError,
-    required this.errorMessage,
-    required this.onFullscreen,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      height: 210,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      clipBehavior: Clip.hardEdge,
-      child: Stack(fit: StackFit.expand, children: [
-        if (hasError)
-          _ErrorPlaceholder(channel: channel, message: errorMessage, onRetry: onRetry)
-        else
-          Video(
-            controller: controller,
-            controls: NoVideoControls,
-            fill: Colors.black,
-          ),
-
-        // Top overlay: channel name + live badge
-        Positioned(
-          top: 10, left: 12, right: 12,
-          child: Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  width: 6, height: 6,
-                  margin: const EdgeInsets.only(right: 5),
-                  decoration: const BoxDecoration(color: AppColors.liveRed, shape: BoxShape.circle),
-                ),
-                Text(channel.name,
-                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                ),
-              ]),
-            ),
-            const Spacer(),
-            // Fullscreen button
-            GestureDetector(
-              onTap: onFullscreen,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.6),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 18),
-              ),
-            ),
-          ]),
-        ),
-
-        // Bottom: buffering + play/pause overlay
-        Positioned(
-          bottom: 10, left: 12, right: 12,
-          child: StreamBuilder(
-            stream: player.stream.playing,
-            builder: (_, snap) {
-              return Row(children: [
-                // Play/Pause
-                GestureDetector(
-                  onTap: () => player.playOrPause(),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      gradient: AppColors.primaryGradient,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: AppColors.accentPurple.withOpacity(0.5), blurRadius: 12)],
-                    ),
-                    child: Icon(
-                      (snap.data ?? false) ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: Colors.white, size: 20,
+                // ── Video widget with EXPLICIT w/h ─────────────
+                if (!_hasError)
+                  Positioned.fill(
+                    child: Video(
+                      controller: _controller,
+                      width: vw,
+                      height: vh,
+                      controls: NoVideoControls,
+                      fill: Colors.black,
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                // Volume
-                StreamBuilder(
-                  stream: player.stream.volume,
-                  builder: (_, volSnap) {
-                    final vol = volSnap.data ?? 100.0;
-                    return GestureDetector(
-                      onTap: () => player.setVolume(vol > 0 ? 0 : 100),
-                      child: Container(
-                        padding: const EdgeInsets.all(6),
+
+                // ── Loading overlay ────────────────────────────
+                if (_isLoading && !_hasError)
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 30, height: 30,
+                            child: CircularProgressIndicator(
+                              color: AppColors.accentViolet, strokeWidth: 2.5),
+                          ),
+                          const SizedBox(height: 10),
+                          Text('Conectando…',
+                            style: AppTextStyles.bodySmall
+                                .copyWith(color: Colors.white54)),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // ── Error overlay ──────────────────────────────
+                if (_hasError)
+                  Positioned.fill(
+                    child: _ErrorPlaceholder(
+                      channel: widget.channel,
+                      message: _errorMessage,
+                      onRetry: _playStream,
+                    ),
+                  ),
+
+                // ── Top bar: name + fullscreen ─────────────────
+                if (!_hasError)
+                  Positioned(
+                    top: 10, left: 12, right: 12,
+                    child: Row(children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
+                          color: Colors.black.withOpacity(0.65),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Icon(
-                          vol > 0 ? Icons.volume_up_rounded : Icons.volume_off_rounded,
-                          color: Colors.white, size: 16,
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            width: 6, height: 6,
+                            margin: const EdgeInsets.only(right: 5),
+                            decoration: const BoxDecoration(
+                                color: AppColors.liveRed, shape: BoxShape.circle),
+                          ),
+                          Text(widget.channel.name,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 11,
+                                fontWeight: FontWeight.w600),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ]),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => _enterFullscreen(ctx),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.65),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Icon(Icons.fullscreen_rounded,
+                              color: Colors.white, size: 18),
                         ),
                       ),
-                    );
-                  },
-                ),
-                const Spacer(),
-                // Buffering indicator
-                StreamBuilder(
-                  stream: player.stream.buffering,
-                  builder: (_, bufSnap) {
-                    if (bufSnap.data == true) {
-                      return const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      );
-                    }
-                    return const SizedBox.shrink();
-                  },
-                ),
-              ]);
-            },
+                    ]),
+                  ),
+
+                // ── Bottom controls ────────────────────────────
+                if (!_hasError)
+                  Positioned(
+                    bottom: 10, left: 12, right: 12,
+                    child: Row(children: [
+                      // Play/pause
+                      StreamBuilder<bool>(
+                        stream: _player.stream.playing,
+                        builder: (_, snap) => GestureDetector(
+                          onTap: () => _player.playOrPause(),
+                          child: Container(
+                            padding: const EdgeInsets.all(7),
+                            decoration: BoxDecoration(
+                              gradient: AppColors.primaryGradient,
+                              shape: BoxShape.circle,
+                              boxShadow: [BoxShadow(
+                                color: AppColors.accentPurple.withOpacity(0.5),
+                                blurRadius: 10)],
+                            ),
+                            child: Icon(
+                              (snap.data ?? false)
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.white, size: 18),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Volume
+                      StreamBuilder<double>(
+                        stream: _player.stream.volume,
+                        builder: (_, snap) {
+                          final muted = (snap.data ?? 100.0) == 0;
+                          return GestureDetector(
+                            onTap: () =>
+                                _player.setVolume(muted ? 100.0 : 0.0),
+                            child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.55),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Icon(
+                                muted
+                                    ? Icons.volume_off_rounded
+                                    : Icons.volume_up_rounded,
+                                color: Colors.white, size: 16),
+                            ),
+                          );
+                        },
+                      ),
+                      const Spacer(),
+                      // Buffering
+                      StreamBuilder<bool>(
+                        stream: _player.stream.buffering,
+                        builder: (_, snap) {
+                          if (snap.data != true) return const SizedBox.shrink();
+                          return const SizedBox(
+                            width: 14, height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white70),
+                          );
+                        },
+                      ),
+                    ]),
+                  ),
+
+              ]),
+            ),
           ),
-        ),
-      ]),
+        );
+      }),
     );
   }
 }
 
 // ── Fullscreen Player ──────────────────────────────────────────────────────────
 
-class _FullscreenPlayer extends StatelessWidget {
+class _FullscreenPlayer extends StatefulWidget {
   final VideoController controller;
   final Player player;
   final Channel channel;
-  final VoidCallback onExitFullscreen;
+  final VoidCallback onExit;
 
   const _FullscreenPlayer({
     required this.controller,
     required this.player,
     required this.channel,
-    required this.onExitFullscreen,
+    required this.onExit,
   });
+
+  @override
+  State<_FullscreenPlayer> createState() => _FullscreenPlayerState();
+}
+
+class _FullscreenPlayerState extends State<_FullscreenPlayer> {
+  bool _showControls = true;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startHideTimer();
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _showControls = false);
+    });
+  }
+
+  void _onTap() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(fit: StackFit.expand, children: [
-        Video(
-          controller: controller,
-          controls: NoVideoControls,
-          fill: Colors.black,
-        ),
-        // Exit fullscreen button
-        Positioned(
-          top: 48, right: 16,
-          child: GestureDetector(
-            onTap: onExitFullscreen,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(8),
+      body: GestureDetector(
+        onTap: _onTap,
+        behavior: HitTestBehavior.opaque,
+        child: LayoutBuilder(builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+          return Stack(children: [
+
+            // ── Video with explicit size (critical) ────────────
+            SizedBox(
+              width: w, height: h,
+              child: Video(
+                controller: widget.controller,
+                width: w, height: h,
+                controls: NoVideoControls,
+                fill: Colors.black,
               ),
-              child: const Icon(Icons.fullscreen_exit_rounded, color: Colors.white, size: 24),
             ),
-          ),
-        ),
-        // Channel name overlay
-        Positioned(
-          top: 52, left: 16,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.6),
-              borderRadius: BorderRadius.circular(8),
+
+            // ── Buffering ──────────────────────────────────────
+            StreamBuilder<bool>(
+              stream: widget.player.stream.buffering,
+              builder: (_, snap) {
+                if (snap.data != true) return const SizedBox.shrink();
+                return const Center(
+                  child: CircularProgressIndicator(
+                      color: AppColors.accentViolet, strokeWidth: 3),
+                );
+              },
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 7, height: 7,
-                margin: const EdgeInsets.only(right: 6),
-                decoration: const BoxDecoration(color: AppColors.liveRed, shape: BoxShape.circle),
-              ),
-              Text(channel.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-            ]),
-          ),
-        ),
-        // Center play/pause
-        Center(
-          child: StreamBuilder(
-            stream: player.stream.playing,
-            builder: (_, snap) => GestureDetector(
-              onTap: () => player.playOrPause(),
-              child: AnimatedOpacity(
-                opacity: 1.0,
-                duration: const Duration(milliseconds: 200),
+
+            // ── Controls overlay ───────────────────────────────
+            AnimatedOpacity(
+              opacity: _showControls ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 250),
+              child: IgnorePointer(
+                ignoring: !_showControls,
                 child: Container(
-                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    gradient: AppColors.primaryGradient,
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: AppColors.accentPurple.withOpacity(0.6), blurRadius: 24)],
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.black.withOpacity(0.75),
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.6),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
                   ),
-                  child: Icon(
-                    (snap.data ?? false) ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: Colors.white, size: 36,
-                  ),
+                  child: SafeArea(child: Stack(children: [
+                    // Top bar
+                    Positioned(
+                      top: 8, left: 8, right: 8,
+                      child: Row(children: [
+                        GestureDetector(
+                          onTap: widget.onExit,
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.5),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.fullscreen_exit_rounded,
+                                color: Colors.white, size: 24),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                              color: AppColors.liveRed,
+                              borderRadius: BorderRadius.circular(6)),
+                          child: const Text('● LIVE',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(widget.channel.name,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ),
+                      ]),
+                    ),
+
+                    // Center play/pause
+                    Center(
+                      child: StreamBuilder<bool>(
+                        stream: widget.player.stream.playing,
+                        builder: (_, snap) => GestureDetector(
+                          onTap: () {
+                            widget.player.playOrPause();
+                            _startHideTimer();
+                          },
+                          child: Container(
+                            width: 68, height: 68,
+                            decoration: BoxDecoration(
+                              gradient: AppColors.primaryGradient,
+                              shape: BoxShape.circle,
+                              boxShadow: [BoxShadow(
+                                color: AppColors.accentPurple.withOpacity(0.55),
+                                blurRadius: 24)],
+                            ),
+                            child: Icon(
+                              (snap.data ?? false)
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.white, size: 36),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Bottom volume
+                    Positioned(
+                      bottom: 12, left: 12,
+                      child: StreamBuilder<double>(
+                        stream: widget.player.stream.volume,
+                        builder: (_, snap) {
+                          final muted = (snap.data ?? 100.0) == 0;
+                          return GestureDetector(
+                            onTap: () =>
+                                widget.player.setVolume(muted ? 100.0 : 0.0),
+                            child: Icon(
+                              muted
+                                  ? Icons.volume_off_rounded
+                                  : Icons.volume_up_rounded,
+                              color: Colors.white, size: 26),
+                          );
+                        },
+                      ),
+                    ),
+                  ])),
                 ),
               ),
             ),
-          ),
-        ),
-        // Buffering spinner
-        StreamBuilder(
-          stream: player.stream.buffering,
-          builder: (_, snap) {
-            if (snap.data != true) return const SizedBox.shrink();
-            return const Center(
-              child: CircularProgressIndicator(color: AppColors.accentPurple, strokeWidth: 2),
-            );
-          },
-        ),
-      ]),
+          ]);
+        }),
+      ),
     );
   }
 }
 
-// ── Playback Controls Bar ──────────────────────────────────────────────────────
+// ── Playback Controls ──────────────────────────────────────────────────────────
 
 class _PlaybackControls extends StatelessWidget {
   final Player player;
   final VoidCallback onCopyUrl;
   final bool isCopied;
 
-  const _PlaybackControls({required this.player, required this.onCopyUrl, required this.isCopied});
+  const _PlaybackControls({
+    required this.player, required this.onCopyUrl, required this.isCopied});
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder(
+    return StreamBuilder<bool>(
       stream: player.stream.playing,
       builder: (_, snap) {
         final playing = snap.data ?? false;
         return Row(children: [
-          // Play/Pause
           _CtrlBtn(
             icon: playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
             label: playing ? 'Pausar' : 'Reproducir',
@@ -502,14 +683,12 @@ class _PlaybackControls extends StatelessWidget {
             onTap: () => player.playOrPause(),
           ),
           const SizedBox(width: 10),
-          // Stop
           _CtrlBtn(
             icon: Icons.stop_rounded,
             label: 'Detener',
             onTap: () => player.stop(),
           ),
           const SizedBox(width: 10),
-          // Copy URL
           _CtrlBtn(
             icon: isCopied ? Icons.check_rounded : Icons.copy_rounded,
             label: isCopied ? 'Copiado' : 'Copiar URL',
@@ -526,8 +705,8 @@ class _CtrlBtn extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool gradient;
-
-  const _CtrlBtn({required this.icon, required this.label, required this.onTap, this.gradient = false});
+  const _CtrlBtn(
+      {required this.icon, required this.label, required this.onTap, this.gradient = false});
 
   @override
   Widget build(BuildContext context) {
@@ -544,7 +723,9 @@ class _CtrlBtn extends StatelessWidget {
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, size: 15, color: Colors.white),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
         ]),
       ),
     );
@@ -557,8 +738,8 @@ class _ErrorPlaceholder extends StatelessWidget {
   final Channel channel;
   final String message;
   final VoidCallback onRetry;
-
-  const _ErrorPlaceholder({required this.channel, required this.message, required this.onRetry});
+  const _ErrorPlaceholder(
+      {required this.channel, required this.message, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -566,30 +747,49 @@ class _ErrorPlaceholder extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [color.withOpacity(0.4), Colors.black],
+          colors: [color.withOpacity(0.35), Colors.black],
           begin: Alignment.topLeft, end: Alignment.bottomRight,
         ),
       ),
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(Icons.signal_wifi_statusbar_connected_no_internet_4_rounded,
-          color: Colors.white54, size: 36),
-        const SizedBox(height: 10),
-        Text('Stream no disponible', style: AppTextStyles.labelMedium.copyWith(color: Colors.white70)),
-        const SizedBox(height: 4),
-        Text('Puede estar geobloqueado o inactivo',
-          style: AppTextStyles.bodySmall.copyWith(color: Colors.white38),
-          textAlign: TextAlign.center,
+        Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.08),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white24),
+          ),
+          child: const Icon(
+            Icons.signal_wifi_statusbar_connected_no_internet_4_rounded,
+            color: Colors.white54, size: 26),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
+        Text('Canal no disponible',
+            style: AppTextStyles.labelMedium.copyWith(color: Colors.white70)),
+        const SizedBox(height: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(message,
+            style: AppTextStyles.bodySmall.copyWith(color: Colors.white38),
+            textAlign: TextAlign.center),
+        ),
+        const SizedBox(height: 16),
         GestureDetector(
           onTap: onRetry,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
             decoration: BoxDecoration(
               gradient: AppColors.primaryGradient,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: const Text('Reintentar', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.refresh_rounded, color: Colors.white, size: 15),
+              SizedBox(width: 6),
+              Text('Reintentar',
+                  style: TextStyle(
+                      color: Colors.white, fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+            ]),
           ),
         ),
       ]),
@@ -613,10 +813,11 @@ class _InfoRow extends StatelessWidget {
         Icon(icon, size: 14, color: AppColors.textMuted),
         const SizedBox(width: 8),
         Text('$label: ', style: AppTextStyles.bodySmall),
-        Expanded(child: Text(value,
-          style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary),
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-        )),
+        Expanded(
+          child: Text(value,
+            style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary),
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
       ]),
     );
   }
