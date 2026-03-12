@@ -28,7 +28,7 @@ class VideoPlayerSheet extends StatefulWidget {
 
 class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   late final Player _player;
-  late final VideoController _controller;
+  late VideoController _controller;
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<dynamic>? _videoParamsSub;
@@ -102,8 +102,8 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     try {
       await _player.open(Media(url));
 
-      // If after 15s no video frame is rendered, try one recovery open.
-      _timeoutTimer = Timer(const Duration(seconds: 15), () {
+      // If after 20s no video frame is rendered, try one recovery open.
+      _timeoutTimer = Timer(const Duration(seconds: 20), () {
         if (mounted && !_hasError) {
           if (!_hasVideoFrame) {
             if (_player.state.playing && !_recoveryAttempted) {
@@ -136,9 +136,17 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     _recoveryAttempted = true;
     try {
       await _player.stop();
+
+      // Recreate the video controller to force a fresh Android video output surface.
+      if (mounted) {
+        setState(() => _controller = VideoController(_player));
+      } else {
+        _controller = VideoController(_player);
+      }
+
       await _player.open(Media(url));
       _timeoutTimer?.cancel();
-      _timeoutTimer = Timer(const Duration(seconds: 10), () {
+      _timeoutTimer = Timer(const Duration(seconds: 12), () {
         if (mounted && !_hasError && !_hasVideoFrame) {
           setState(() {
             _hasError = true;
@@ -344,6 +352,7 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
             if (!_hasError)
               Positioned.fill(
                 child: Video(
+                  key: ValueKey(_controller.hashCode),
                   controller: _controller,
                   width: vw,
                   height: vh,
@@ -575,6 +584,7 @@ class _FullscreenPlayerState extends State<_FullscreenPlayer> {
             SizedBox(
               width: w, height: h,
               child: Video(
+                key: ValueKey(widget.controller.hashCode),
                 controller: widget.controller,
                 width: w, height: h,
                 controls: NoVideoControls,
