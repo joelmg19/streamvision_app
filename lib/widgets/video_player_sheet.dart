@@ -288,106 +288,121 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
         final vw = constraints.maxWidth;
         final vh = vw * 9 / 16; // 16:9 aspect ratio
 
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: SizedBox(
-            width: vw,
-            height: vh,
-            child: ColoredBox(
-              color: Colors.black,
-              child: Stack(children: [
+        return SizedBox(
+          width: vw,
+          height: vh,
+          child: Stack(children: [
+
+            // NOTE:
+            // Avoid ClipRRect around native video renderers (Android SurfaceView/TextureView).
+            // Clipping can cause a black frame on some devices while audio keeps playing.
+            const Positioned.fill(
+              child: ColoredBox(color: Colors.black),
+            ),
 
                 // ── Video widget with EXPLICIT w/h ─────────────
-                if (!_hasError)
-                  Positioned.fill(
-                    child: Video(
-                      controller: _controller,
-                      width: vw,
-                      height: vh,
-                      controls: NoVideoControls,
-                      fill: Colors.black,
-                    ),
-                  ),
+            if (!_hasError)
+              Positioned.fill(
+                child: Video(
+                  controller: _controller,
+                  width: vw,
+                  height: vh,
+                  controls: NoVideoControls,
+                  fill: Colors.black,
+                ),
+              ),
 
                 // ── Loading overlay ────────────────────────────
-                if (_isLoading && !_hasError)
-                  Positioned.fill(
-                    child: ColoredBox(
-                      color: Colors.black,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(
-                            width: 30, height: 30,
-                            child: CircularProgressIndicator(
-                              color: AppColors.accentViolet, strokeWidth: 2.5),
-                          ),
-                          const SizedBox(height: 10),
-                          Text('Conectando…',
-                            style: AppTextStyles.bodySmall
-                                .copyWith(color: Colors.white54)),
-                        ],
+            if (_isLoading && !_hasError)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 30, height: 30,
+                        child: CircularProgressIndicator(
+                          color: AppColors.accentViolet, strokeWidth: 2.5),
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      Text('Conectando…',
+                        style: AppTextStyles.bodySmall
+                            .copyWith(color: Colors.white54)),
+                    ],
                   ),
+                ),
+              ),
 
-                // ── Error overlay ──────────────────────────────
-                if (_hasError)
-                  Positioned.fill(
-                    child: _ErrorPlaceholder(
-                      channel: widget.channel,
-                      message: _errorMessage,
-                      onRetry: _playStream,
-                    ),
+            // Rounded border overlay (without clipping the video surface).
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
                   ),
+                ),
+              ),
+            ),
 
-                // ── Top bar: name + fullscreen ─────────────────
-                if (!_hasError)
-                  Positioned(
-                    top: 10, left: 12, right: 12,
-                    child: Row(children: [
+            // ── Error overlay ──────────────────────────────
+            if (_hasError)
+              Positioned.fill(
+                child: _ErrorPlaceholder(
+                  channel: widget.channel,
+                  message: _errorMessage,
+                  onRetry: _playStream,
+                ),
+              ),
+
+            // ── Top bar: name + fullscreen ─────────────────
+            if (!_hasError)
+              Positioned(
+                top: 10, left: 12, right: 12,
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.65),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.65),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Container(
-                            width: 6, height: 6,
-                            margin: const EdgeInsets.only(right: 5),
-                            decoration: const BoxDecoration(
-                                color: AppColors.liveRed, shape: BoxShape.circle),
-                          ),
-                          Text(widget.channel.name,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 11,
-                                fontWeight: FontWeight.w600),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        ]),
+                        width: 6, height: 6,
+                        margin: const EdgeInsets.only(right: 5),
+                        decoration: const BoxDecoration(
+                            color: AppColors.liveRed, shape: BoxShape.circle),
                       ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () => _enterFullscreen(ctx),
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.65),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Icon(Icons.fullscreen_rounded,
-                              color: Colors.white, size: 18),
-                        ),
-                      ),
+                      Text(widget.channel.name,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 11,
+                            fontWeight: FontWeight.w600),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                     ]),
                   ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => _enterFullscreen(ctx),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.65),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(Icons.fullscreen_rounded,
+                          color: Colors.white, size: 18),
+                    ),
+                  ),
+                ]),
+              ),
 
                 // ── Bottom controls ────────────────────────────
-                if (!_hasError)
-                  Positioned(
-                    bottom: 10, left: 12, right: 12,
-                    child: Row(children: [
+            if (!_hasError)
+              Positioned(
+                bottom: 10, left: 12, right: 12,
+                child: Row(children: [
                       // Play/pause
                       StreamBuilder<bool>(
                         stream: _player.stream.playing,
@@ -447,12 +462,10 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
                           );
                         },
                       ),
-                    ]),
-                  ),
+                ]),
+              ),
 
-              ]),
-            ),
-          ),
+          ]),
         );
       }),
     );
