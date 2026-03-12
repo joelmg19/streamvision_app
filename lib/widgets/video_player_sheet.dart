@@ -29,10 +29,15 @@ class VideoPlayerSheet extends StatefulWidget {
 class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   late final Player _player;
   late final VideoController _controller;
+  StreamSubscription<String>? _errorSub;
+  StreamSubscription<bool>? _playingSub;
+  StreamSubscription<dynamic>? _videoParamsSub;
   bool _isCopied = false;
   bool _hasError = false;
   String _errorMessage = '';
   bool _isLoading = true;
+  bool _hasVideoFrame = false;
+  bool _recoveryAttempted = false;
   Timer? _timeoutTimer;
 
   @override
@@ -40,7 +45,34 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     super.initState();
     _player = Player();
     _controller = VideoController(_player);
+    _bindPlayerStreams();
     _playStream();
+  }
+
+  void _bindPlayerStreams() {
+    _errorSub = _player.stream.error.listen((err) {
+      if (mounted && err.isNotEmpty && !_hasError) {
+        _timeoutTimer?.cancel();
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+          _errorMessage = 'Stream no disponible.\nPuede estar caído o geobloqueado.';
+        });
+      }
+    });
+
+    // Keep this subscription to react to player state changes.
+    _playingSub = _player.stream.playing.listen((_) {});
+
+    _videoParamsSub = _player.stream.videoParams.listen((_) {
+      if (!mounted) return;
+      if (!_hasVideoFrame || _isLoading) {
+        setState(() {
+          _hasVideoFrame = true;
+          _isLoading = false;
+        });
+      }
+    });
   }
 
   Future<void> _playStream() async {
@@ -49,6 +81,8 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
       _hasError = false;
       _isLoading = true;
       _errorMessage = '';
+      _hasVideoFrame = false;
+      _recoveryAttempted = false;
     });
 
     _timeoutTimer?.cancel();
@@ -65,47 +99,24 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
       return;
     }
 
-    // Listen for player errors
-    _player.stream.error.listen((err) {
-      if (mounted && err.isNotEmpty && !_hasError) {
-        _timeoutTimer?.cancel();
-        setState(() {
-          _hasError = true;
-          _isLoading = false;
-          _errorMessage = 'Stream no disponible.\nPuede estar caído o geobloqueado.';
-        });
-      }
-    });
-
-    // Once playing starts, cancel timeout and hide spinner
-    _player.stream.playing.listen((playing) {
-      if (playing && mounted && _isLoading) {
-        _timeoutTimer?.cancel();
-        setState(() => _isLoading = false);
-      }
-    });
-
-    // Video params ready = frame is rendering
-    _player.stream.videoParams.listen((_) {
-      if (mounted && _isLoading) {
-        setState(() => _isLoading = false);
-      }
-    });
-
     try {
       await _player.open(Media(url));
 
-      // If after 15s still not playing → dead stream
+      // If after 15s no video frame is rendered, try one recovery open.
       _timeoutTimer = Timer(const Duration(seconds: 15), () {
         if (mounted && !_hasError) {
-          if (!_player.state.playing) {
+          if (!_hasVideoFrame) {
+            if (_player.state.playing && !_recoveryAttempted) {
+              _recoverVideoSurface(url);
+              return;
+            }
             setState(() {
               _hasError = true;
               _isLoading = false;
-              _errorMessage = 'El canal no responde.\nPuede estar inactivo o geobloqueado.';
+              _errorMessage = _player.state.playing
+                  ? 'Se detectó audio pero no video.\nReintenta o prueba otro canal.'
+                  : 'El canal no responde.\nPuede estar inactivo o geobloqueado.';
             });
-          } else {
-            if (mounted) setState(() => _isLoading = false);
           }
         }
       });
@@ -116,6 +127,32 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
           _hasError = true;
           _isLoading = false;
           _errorMessage = 'Error al conectar con el stream.';
+        });
+      }
+    }
+  }
+
+  Future<void> _recoverVideoSurface(String url) async {
+    _recoveryAttempted = true;
+    try {
+      await _player.stop();
+      await _player.open(Media(url));
+      _timeoutTimer?.cancel();
+      _timeoutTimer = Timer(const Duration(seconds: 10), () {
+        if (mounted && !_hasError && !_hasVideoFrame) {
+          setState(() {
+            _hasError = true;
+            _isLoading = false;
+            _errorMessage = 'No se pudo renderizar video para este stream.';
+          });
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+          _errorMessage = 'Error al reintentar la reproducción de video.';
         });
       }
     }
@@ -161,6 +198,9 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   @override
   void dispose() {
     _timeoutTimer?.cancel();
+    _errorSub?.cancel();
+    _playingSub?.cancel();
+    _videoParamsSub?.cancel();
     _player.dispose();
     super.dispose();
   }
