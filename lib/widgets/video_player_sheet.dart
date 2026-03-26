@@ -27,7 +27,7 @@ class VideoPlayerSheet extends StatefulWidget {
 }
 
 class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
-  late final Player _player;
+  late Player _player;
   late VideoController _controller;
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
@@ -43,10 +43,24 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   @override
   void initState() {
     super.initState();
+    _initializePlayer();
+    _playStream();
+  }
+
+
+  void _initializePlayer() {
     _player = Player();
     _controller = VideoController(_player);
     _bindPlayerStreams();
-    _playStream();
+  }
+
+  Future<void> _recreatePlayer() async {
+    _timeoutTimer?.cancel();
+    await _errorSub?.cancel();
+    await _playingSub?.cancel();
+    await _videoParamsSub?.cancel();
+    _player.dispose();
+    _initializePlayer();
   }
 
   void _bindPlayerStreams() {
@@ -135,14 +149,15 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   Future<void> _recoverVideoSurface(String url) async {
     _recoveryAttempted = true;
     try {
-      await _player.stop();
+      // Full player recreation is more reliable than only rebuilding the controller
+      // when the stream reproduces audio but no video frame is rendered.
+      await _recreatePlayer();
 
-      // Recreate the video controller to force a fresh Android video output surface.
-      if (mounted) {
-        setState(() => _controller = VideoController(_player));
-      } else {
-        _controller = VideoController(_player);
-      }
+      if (!mounted) return;
+      setState(() {
+        _isLoading = true;
+        _hasVideoFrame = false;
+      });
 
       await _player.open(Media(url));
       _timeoutTimer?.cancel();
