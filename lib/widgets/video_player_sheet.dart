@@ -34,12 +34,16 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<dynamic>? _videoParamsSub;
+  StreamSubscription<dynamic>? _tracksSub;
   bool _isCopied = false;
   bool _hasError = false;
   String _errorMessage = '';
   bool _isLoading = true;
   bool _hasVideoFrame = false;
   bool _recoveryAttempted = false;
+  bool _subtitleLoading = false;
+  List<dynamic> _subtitleTracks = [];
+  dynamic _selectedSubtitleTrack;
   Timer? _timeoutTimer;
 
   @override
@@ -67,6 +71,7 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     await _errorSub?.cancel();
     await _playingSub?.cancel();
     await _videoParamsSub?.cancel();
+    await _tracksSub?.cancel();
     _player.dispose();
     _initializePlayer();
   }
@@ -94,6 +99,22 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
           _isLoading = false;
         });
       }
+    });
+
+    _tracksSub = _player.stream.tracks.listen((tracks) {
+      if (!mounted) return;
+      final dynamic dynTracks = tracks;
+      final List<dynamic> subtitleTracks = [];
+      try {
+        final dynamic list = dynTracks.subtitle;
+        if (list is List) {
+          subtitleTracks.addAll(list);
+        }
+      } catch (_) {}
+
+      setState(() {
+        _subtitleTracks = subtitleTracks;
+      });
     });
   }
 
@@ -136,8 +157,8 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
               _hasError = true;
               _isLoading = false;
               _errorMessage = _player.state.playing
-                  ? 'Se detectó audio pero no video.\nReintenta o prueba otro canal.'
-                  : 'El canal no responde.\nPuede estar inactivo o geobloqueado.';
+                  ? 'Se detectó audio pero no video.\nSin señal de imagen en este canal.'
+                  : 'Sin señal o canal no disponible.\nPuede estar inactivo o geobloqueado.';
             });
           }
         }
@@ -203,12 +224,11 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
           controller: _controller,
           player: _player,
           channel: widget.channel,
+          onSubtitlesTap: _openSubtitleMenu,
+          subtitleEnabled: _selectedSubtitleTrack != null,
+          onSystemExit: _resetPortraitMode,
           onExit: () {
-            SystemChrome.setPreferredOrientations([
-              DeviceOrientation.portraitUp,
-              DeviceOrientation.portraitDown,
-            ]);
-            SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+            _resetPortraitMode();
             Navigator.of(context).pop();
           },
         ),
@@ -230,12 +250,135 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     }
   }
 
+  String _subtitleLabel(dynamic track) {
+    try {
+      final dynamic title = track.title;
+      if (title is String && title.trim().isNotEmpty) {
+        return title.trim();
+      }
+    } catch (_) {}
+    try {
+      final dynamic language = track.language;
+      if (language is String && language.trim().isNotEmpty) {
+        return language.trim().toUpperCase();
+      }
+    } catch (_) {}
+    return 'Subtítulo';
+  }
+
+  Future<void> _openSubtitleMenu() async {
+    if (_subtitleLoading) return;
+    final options = <dynamic>[null, ..._subtitleTracks];
+    final selected = await showModalBottomSheet<dynamic>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Subtítulos',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ...options.map((track) {
+              final isOff = track == null;
+              final label = isOff ? 'Desactivados' : _subtitleLabel(track);
+              final isSelected = isOff
+                  ? _selectedSubtitleTrack == null
+                  : _selectedSubtitleTrack == track;
+              return ListTile(
+                title: Text(
+                  label,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                trailing: isSelected
+                    ? const Icon(Icons.check_rounded, color: AppColors.accentViolet)
+                    : null,
+                onTap: () => Navigator.of(context).pop(track),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || selected == null && _selectedSubtitleTrack == null) return;
+    await _setSubtitleTrack(selected);
+  }
+
+  Future<void> _setSubtitleTrack(dynamic track) async {
+    setState(() => _subtitleLoading = true);
+    try {
+      final dynamic dynPlayer = _player;
+      if (track == null) {
+        final noTrack = (SubtitleTrack as dynamic).no();
+        await dynPlayer.setSubtitleTrack(noTrack);
+      } else {
+        await dynPlayer.setSubtitleTrack(track);
+      }
+      if (!mounted) return;
+      setState(() => _selectedSubtitleTrack = track);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            track == null
+                ? 'Subtítulos desactivados'
+                : 'Subtítulos: ${_subtitleLabel(track)}',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Este canal no permite cambiar subtítulos o idiomas.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _subtitleLoading = false);
+      }
+    }
+  }
+
+  void _resetPortraitMode() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
   @override
   void dispose() {
     _timeoutTimer?.cancel();
     _errorSub?.cancel();
     _playingSub?.cancel();
     _videoParamsSub?.cancel();
+    _tracksSub?.cancel();
+    _resetPortraitMode();
     _player.dispose();
     super.dispose();
   }
@@ -325,12 +468,15 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
           if (!_hasError)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _PlaybackControls(
-                player: _player,
-                onCopyUrl: _copyStreamUrl,
-                isCopied: _isCopied,
+                child: _PlaybackControls(
+                  player: _player,
+                  onCopyUrl: _copyStreamUrl,
+                  isCopied: _isCopied,
+                  onSubtitlesTap: _openSubtitleMenu,
+                  subtitleEnabled: _selectedSubtitleTrack != null,
+                  subtitleLoading: _subtitleLoading,
+                ),
               ),
-            ),
 
           // ── Info ──────────────────────────────────────────────
           if (widget.channel.groupTitle != null || widget.channel.currentProgram.isNotEmpty)
@@ -526,6 +672,24 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
                         },
                       ),
                       const Spacer(),
+                      GestureDetector(
+                        onTap: _openSubtitleMenu,
+                        child: Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.55),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Icon(
+                            _selectedSubtitleTrack != null
+                                ? Icons.closed_caption_rounded
+                                : Icons.closed_caption_off_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       // Buffering
                       StreamBuilder<bool>(
                         stream: _player.stream.buffering,
@@ -554,12 +718,18 @@ class _FullscreenPlayer extends StatefulWidget {
   final VideoController controller;
   final Player player;
   final Channel channel;
+  final VoidCallback onSubtitlesTap;
+  final bool subtitleEnabled;
+  final VoidCallback onSystemExit;
   final VoidCallback onExit;
 
   const _FullscreenPlayer({
     required this.controller,
     required this.player,
     required this.channel,
+    required this.onSubtitlesTap,
+    required this.subtitleEnabled,
+    required this.onSystemExit,
     required this.onExit,
   });
 
@@ -597,15 +767,17 @@ class _FullscreenPlayerState extends State<_FullscreenPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: _onTap,
-        behavior: HitTestBehavior.opaque,
-        child: LayoutBuilder(builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final h = constraints.maxHeight;
-          return Stack(children: [
+    return PopScope(
+      onPopInvokedWithResult: (_, __) => widget.onSystemExit(),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          onTap: _onTap,
+          behavior: HitTestBehavior.opaque,
+          child: LayoutBuilder(builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final h = constraints.maxHeight;
+            return Stack(children: [
 
             // ── Video with explicit size (critical) ────────────
             SizedBox(
@@ -719,31 +891,60 @@ class _FullscreenPlayerState extends State<_FullscreenPlayer> {
                       ),
                     ),
 
-                    // Bottom volume
+                    // Bottom controls
                     Positioned(
-                      bottom: 12, left: 12,
-                      child: StreamBuilder<double>(
-                        stream: widget.player.stream.volume,
-                        builder: (_, snap) {
-                          final muted = (snap.data ?? 100.0) == 0;
-                          return GestureDetector(
-                            onTap: () =>
-                                widget.player.setVolume(muted ? 100.0 : 0.0),
+                      bottom: 12,
+                      left: 12,
+                      right: 12,
+                      child: Row(
+                        children: [
+                          StreamBuilder<double>(
+                            stream: widget.player.stream.volume,
+                            builder: (_, snap) {
+                              final muted = (snap.data ?? 100.0) == 0;
+                              return GestureDetector(
+                                onTap: () =>
+                                    widget.player.setVolume(muted ? 100.0 : 0.0),
+                                child: Icon(
+                                  muted
+                                      ? Icons.volume_off_rounded
+                                      : Icons.volume_up_rounded,
+                                  color: Colors.white,
+                                  size: 26,
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(width: 18),
+                          GestureDetector(
+                            onTap: () => widget.player.seek(Duration.zero),
+                            child: const Icon(
+                              Icons.replay_rounded,
+                              color: Colors.white,
+                              size: 26,
+                            ),
+                          ),
+                          const Spacer(),
+                          GestureDetector(
+                            onTap: widget.onSubtitlesTap,
                             child: Icon(
-                              muted
-                                  ? Icons.volume_off_rounded
-                                  : Icons.volume_up_rounded,
-                              color: Colors.white, size: 26),
-                          );
-                        },
+                              widget.subtitleEnabled
+                                  ? Icons.closed_caption_rounded
+                                  : Icons.closed_caption_off_rounded,
+                              color: Colors.white,
+                              size: 26,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ])),
                 ),
               ),
             ),
-          ]);
-        }),
+            ]);
+          }),
+        ),
       ),
     );
   }
@@ -754,10 +955,19 @@ class _FullscreenPlayerState extends State<_FullscreenPlayer> {
 class _PlaybackControls extends StatelessWidget {
   final Player player;
   final VoidCallback onCopyUrl;
+  final VoidCallback onSubtitlesTap;
   final bool isCopied;
+  final bool subtitleEnabled;
+  final bool subtitleLoading;
 
   const _PlaybackControls({
-    required this.player, required this.onCopyUrl, required this.isCopied});
+    required this.player,
+    required this.onCopyUrl,
+    required this.onSubtitlesTap,
+    required this.isCopied,
+    required this.subtitleEnabled,
+    required this.subtitleLoading,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -783,6 +993,16 @@ class _PlaybackControls extends StatelessWidget {
             icon: isCopied ? Icons.check_rounded : Icons.copy_rounded,
             label: isCopied ? 'Copiado' : 'Copiar URL',
             onTap: onCopyUrl,
+          ),
+          const SizedBox(width: 10),
+          _CtrlBtn(
+            icon: subtitleLoading
+                ? Icons.hourglass_top_rounded
+                : subtitleEnabled
+                    ? Icons.closed_caption_rounded
+                    : Icons.closed_caption_off_rounded,
+            label: subtitleEnabled ? 'Subtítulos ON' : 'Subtítulos',
+            onTap: onSubtitlesTap,
           ),
         ]);
       },
@@ -854,7 +1074,7 @@ class _ErrorPlaceholder extends StatelessWidget {
             color: Colors.white54, size: 26),
         ),
         const SizedBox(height: 12),
-        Text('Canal no disponible',
+        Text('Canal sin señal / no disponible',
             style: AppTextStyles.labelMedium.copyWith(color: Colors.white70)),
         const SizedBox(height: 6),
         Padding(
