@@ -50,6 +50,7 @@ class _MainScreenState extends State<MainScreen> {
         isFavorite: context.read<ChannelProvider>().isFavorite(channel.id),
         onFavoriteToggle: (id) =>
             context.read<ChannelProvider>().toggleFavorite(id),
+        launchInFullscreen: true,
       ),
     );
   }
