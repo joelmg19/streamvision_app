@@ -14,12 +14,14 @@ class VideoPlayerSheet extends StatefulWidget {
   final Channel channel;
   final void Function(int channelId) onFavoriteToggle;
   final bool isFavorite;
+  final bool launchInFullscreen;
 
   const VideoPlayerSheet({
     super.key,
     required this.channel,
     required this.onFavoriteToggle,
     required this.isFavorite,
+    this.launchInFullscreen = false,
   });
 
   @override
@@ -45,8 +47,14 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     super.initState();
     _initializePlayer();
     _playStream();
+    if (widget.launchInFullscreen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _enterFullscreen(context);
+        }
+      });
+    }
   }
-
 
   void _initializePlayer() {
     _player = Player();
@@ -205,7 +213,11 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
           },
         ),
       ),
-    );
+    ).then((_) {
+      if (widget.launchInFullscreen && mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   void _copyStreamUrl() async {
