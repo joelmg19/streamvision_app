@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'providers/channel_provider.dart';
+import 'providers/vod_provider.dart';
 import 'screens/main_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -20,8 +21,11 @@ void main() {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ChannelProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ChannelProvider()),
+        ChangeNotifierProvider(create: (_) => VodProvider()), // ✅ añadido
+      ],
       child: const StreamVisionApp(),
     ),
   );

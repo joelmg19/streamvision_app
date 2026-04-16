@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,11 +8,13 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/channel_list_tile.dart';
 import '../widgets/video_player_sheet.dart';
+import '../services/tmdb_service.dart';
 import 'home_screen.dart';
 import 'live_tv_screen.dart';
-import 'epg_screen.dart';
+import 'movies_screen.dart';
 import 'favorites_screen.dart';
 import 'settings_screen.dart';
+import 'details_screen.dart'; // Importante para abrir las pelis
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -25,10 +28,14 @@ class _MainScreenState extends State<MainScreen> {
   bool _searchActive = false;
   final TextEditingController _searchController = TextEditingController();
 
+  // Variables para la búsqueda de TMDB
+  Timer? _debounceTimer;
+  List<dynamic> _tmdbSearchResults = [];
+  bool _isTmdbSearching = false;
+
   @override
   void initState() {
     super.initState();
-    // Fetch real channels on startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ChannelProvider>().loadChannels();
     });
@@ -37,6 +44,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -53,6 +61,53 @@ class _MainScreenState extends State<MainScreen> {
         launchInFullscreen: true,
       ),
     );
+  }
+
+  void _openTmdbDetails(Map<String, dynamic> item) {
+    final type = item['media_type'] ?? 'movie';
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DetailsScreen(
+          tmdbId: item['id'].toString(),
+          title: item['title'] ?? item['name'] ?? 'Desconocido',
+          type: type,
+          posterPath: item['poster_path'],
+        ),
+      ),
+    );
+  }
+
+  // Manejador unificado de búsqueda (Canales + Películas)
+  void _onSearchChanged(String query) {
+    // 1. Buscamos en canales locales instantáneamente
+    context.read<ChannelProvider>().setSearchQuery(query);
+
+    // 2. Retrasamos la búsqueda de TMDB para no saturar la API
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+
+    if (query.trim().isEmpty) {
+      setState(() {
+        _tmdbSearchResults = [];
+        _isTmdbSearching = false;
+      });
+      return;
+    }
+
+    setState(() => _isTmdbSearching = true);
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      final results = await TmdbService.searchMulti(query);
+      if (mounted) {
+        setState(() {
+          _tmdbSearchResults = results;
+          _isTmdbSearching = false;
+        });
+      }
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _onSearchChanged('');
   }
 
   @override
@@ -75,28 +130,22 @@ class _MainScreenState extends State<MainScreen> {
               searchActive: _searchActive,
               onSearchToggle: () => setState(() {
                 _searchActive = !_searchActive;
-                if (!_searchActive) {
-                  _searchController.clear();
-                  context.read<ChannelProvider>().setSearchQuery('');
-                }
+                if (!_searchActive) _clearSearch();
               }),
-              onSearchChanged: (q) =>
-                  context.read<ChannelProvider>().setSearchQuery(q),
-              onClearSearch: () {
-                _searchController.clear();
-                context.read<ChannelProvider>().setSearchQuery('');
-              },
+              onSearchChanged: _onSearchChanged,
+              onClearSearch: _clearSearch,
             ),
             Expanded(
               child: Consumer<ChannelProvider>(
                 builder: (context, provider, _) {
-                  // Show search results when active
-                  if (_searchActive &&
-                      provider.searchQuery.isNotEmpty) {
+                  if (_searchActive && provider.searchQuery.isNotEmpty) {
                     return _SearchResults(
                       channels: provider.filteredChannels,
+                      tmdbResults: _tmdbSearchResults,
                       query: provider.searchQuery,
-                      onTap: _openPlayer,
+                      isTmdbSearching: _isTmdbSearching,
+                      onChannelTap: _openPlayer,
+                      onTmdbTap: _openTmdbDetails,
                       onFavoriteToggle: provider.toggleFavorite,
                     );
                   }
@@ -116,18 +165,12 @@ class _MainScreenState extends State<MainScreen> {
 
   Widget _buildTab(ChannelProvider provider) {
     switch (_currentIndex) {
-      case 0:
-        return HomeScreen(onChannelTap: _openPlayer);
-      case 1:
-        return LiveTVScreen(onChannelTap: _openPlayer);
-      case 2:
-        return EpgScreen(onChannelTap: _openPlayer);
-      case 3:
-        return FavoritesScreen(onChannelTap: _openPlayer);
-      case 4:
-        return const SettingsScreen();
-      default:
-        return const SizedBox.shrink();
+      case 0: return HomeScreen(onChannelTap: _openPlayer);
+      case 1: return LiveTVScreen(onChannelTap: _openPlayer);
+      case 2: return const MoviesScreen();
+      case 3: return FavoritesScreen(onChannelTap: _openPlayer);
+      case 4: return const SettingsScreen();
+      default: return const SizedBox.shrink();
     }
   }
 }
@@ -161,14 +204,12 @@ class _TopBar extends StatelessWidget {
         children: [
           if (!searchActive) ...[
             Container(
-              width: 36,
-              height: 36,
+              width: 36, height: 36,
               decoration: BoxDecoration(
                 gradient: AppColors.primaryGradient,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child:
-                  const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
+              child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 10),
             const Expanded(
@@ -176,11 +217,8 @@ class _TopBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('StreamVision',
-                      style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700)),
-                  Text('IPTV Player', style: AppTextStyles.bodySmall),
+                      style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+                  Text('IPTV & VOD Player', style: AppTextStyles.bodySmall),
                 ],
               ),
             ),
@@ -191,26 +229,22 @@ class _TopBar extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: AppColors.accentPurple.withOpacity(0.4)),
+                  border: Border.all(color: AppColors.accentPurple.withOpacity(0.4)),
                 ),
                 child: Row(
                   children: [
                     const SizedBox(width: 12),
-                    const Icon(Icons.search_rounded,
-                        size: 18, color: AppColors.accentViolet),
+                    const Icon(Icons.search_rounded, size: 18, color: AppColors.accentViolet),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
                         controller: searchController,
                         autofocus: true,
                         onChanged: onSearchChanged,
-                        style: const TextStyle(
-                            color: AppColors.textPrimary, fontSize: 14),
+                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
                         decoration: const InputDecoration(
-                          hintText: 'Buscar canales, categorías...',
-                          hintStyle:
-                              TextStyle(color: AppColors.textMuted, fontSize: 14),
+                          hintText: 'Buscar canales, películas, series...',
+                          hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 14),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
@@ -222,8 +256,7 @@ class _TopBar extends StatelessWidget {
                         onTap: onClearSearch,
                         child: const Padding(
                           padding: EdgeInsets.all(8),
-                          child: Icon(Icons.close_rounded,
-                              size: 16, color: AppColors.textMuted),
+                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.textMuted),
                         ),
                       ),
                   ],
@@ -235,76 +268,21 @@ class _TopBar extends StatelessWidget {
             onTap: onSearchToggle,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              width: 38,
-              height: 38,
+              width: 38, height: 38,
               decoration: BoxDecoration(
-                color: searchActive
-                    ? AppColors.accentPurple.withOpacity(0.2)
-                    : Colors.white.withOpacity(0.05),
+                color: searchActive ? AppColors.accentPurple.withOpacity(0.2) : Colors.white.withOpacity(0.05),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: searchActive
-                      ? AppColors.accentPurple.withOpacity(0.4)
-                      : AppColors.border,
+                  color: searchActive ? AppColors.accentPurple.withOpacity(0.4) : AppColors.border,
                 ),
               ),
               child: Icon(
                 searchActive ? Icons.close_rounded : Icons.search_rounded,
                 size: 18,
-                color: searchActive
-                    ? AppColors.accentViolet
-                    : AppColors.textSecondary,
+                color: searchActive ? AppColors.accentViolet : AppColors.textSecondary,
               ),
             ),
           ),
-          if (!searchActive) ...[
-            const SizedBox(width: 8),
-            // Live indicator with channel count
-            Consumer<ChannelProvider>(
-              builder: (_, provider, __) => Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: provider.isLoading
-                    ? const Center(
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.accentPurple,
-                          ),
-                        ),
-                      )
-                    : Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          const Icon(Icons.tv_rounded,
-                              size: 18, color: AppColors.textSecondary),
-                          if (provider.isLoaded && provider.allChannels.isNotEmpty)
-                            Positioned(
-                              top: 5,
-                              right: 5,
-                              child: Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: AppColors.success,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                      color: AppColors.background, width: 1.5),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -322,7 +300,7 @@ class _BottomNav extends StatelessWidget {
   static const _items = [
     _NavItem(Icons.home_rounded, Icons.home_rounded, 'Inicio'),
     _NavItem(Icons.live_tv_outlined, Icons.live_tv_rounded, 'En Vivo'),
-    _NavItem(Icons.calendar_month_outlined, Icons.calendar_month_rounded, 'EPG'),
+    _NavItem(Icons.movie_creation_outlined, Icons.movie_creation_rounded, 'Catálogo'),
     _NavItem(Icons.star_border_rounded, Icons.star_rounded, 'Favoritos'),
     _NavItem(Icons.settings_outlined, Icons.settings_rounded, 'Ajustes'),
   ];
@@ -347,8 +325,7 @@ class _BottomNav extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   gradient: isActive ? AppColors.primaryGradient : null,
                   borderRadius: BorderRadius.circular(12),
@@ -366,8 +343,7 @@ class _BottomNav extends StatelessWidget {
                       item.label,
                       style: TextStyle(
                         fontSize: 10,
-                        fontWeight:
-                            isActive ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                         color: isActive ? Colors.white : AppColors.textMuted,
                       ),
                     ),
@@ -389,24 +365,30 @@ class _NavItem {
   const _NavItem(this.icon, this.activeIcon, this.label);
 }
 
-// ── Search Results ─────────────────────────────────────────────────────────────
+// ── Search Results Unificados ──────────────────────────────────────────────────
 
 class _SearchResults extends StatelessWidget {
   final List<Channel> channels;
+  final List<dynamic> tmdbResults;
   final String query;
-  final void Function(Channel) onTap;
+  final bool isTmdbSearching;
+  final void Function(Channel) onChannelTap;
+  final void Function(Map<String, dynamic>) onTmdbTap;
   final void Function(int) onFavoriteToggle;
 
   const _SearchResults({
     required this.channels,
+    required this.tmdbResults,
     required this.query,
-    required this.onTap,
+    required this.isTmdbSearching,
+    required this.onChannelTap,
+    required this.onTmdbTap,
     required this.onFavoriteToggle,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (channels.isEmpty) {
+    if (channels.isEmpty && tmdbResults.isEmpty && !isTmdbSearching) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -421,34 +403,82 @@ class _SearchResults extends StatelessWidget {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-          child: Text(
-            '${channels.length} resultado${channels.length != 1 ? "s" : ""} para "$query"',
-            style: AppTextStyles.bodyMedium,
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: channels.length,
-            itemBuilder: (context, index) {
-              final ch = channels[index];
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── SECCIÓN CANALES DE TV ──
+          if (channels.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 16, 0, 12),
+              child: Text(
+                '📺 Canales de TV (${channels.length})',
+                style: AppTextStyles.headlineMedium.copyWith(fontSize: 16),
+              ),
+            ),
+            ...channels.map((ch) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ChannelListTile(
+                channel: ch,
+                onTap: () => onChannelTap(ch),
+                onFavoriteToggle: () => onFavoriteToggle(ch.id),
+              ),
+            )).toList(),
+          ],
+
+          // ── SECCIÓN PELÍCULAS Y SERIES ──
+          if (isTmdbSearching)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 30),
+              child: Center(child: CircularProgressIndicator(color: AppColors.accentViolet)),
+            )
+          else if (tmdbResults.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 20, 0, 12),
+              child: Text(
+                '🍿 Películas y Series (${tmdbResults.length})',
+                style: AppTextStyles.headlineMedium.copyWith(fontSize: 16),
+              ),
+            ),
+            ...tmdbResults.map((item) {
+              final title = item['title'] ?? item['name'] ?? 'Desconocido';
+              final posterPath = item['poster_path'];
+              final type = item['media_type'] == 'tv' ? 'Serie' : 'Película';
+              final date = item['release_date'] ?? item['first_air_date'] ?? '';
+              final year = date.isNotEmpty ? date.substring(0, 4) : '';
+
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: ChannelListTile(
-                  channel: ch,
-                  onTap: () => onTap(ch),
-                  onFavoriteToggle: () => onFavoriteToggle(ch.id),
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    width: 50, height: 70,
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(8),
+                      image: posterPath != null
+                          ? DecorationImage(
+                        image: NetworkImage('${TmdbService.imageBaseUrl}$posterPath'),
+                        fit: BoxFit.cover,
+                      )
+                          : null,
+                    ),
+                    child: posterPath == null ? const Icon(Icons.movie, color: Colors.white54) : null,
+                  ),
+                  title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  subtitle: Text('$type ${year.isNotEmpty ? " • $year" : ""}',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white24),
+                  onTap: () => onTmdbTap(item),
                 ),
               );
-            },
-          ),
-        ),
-      ],
+            }).toList(),
+          ],
+
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 }

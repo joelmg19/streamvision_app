@@ -1,58 +1,183 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/channel_provider.dart';
 import '../models/channel.dart';
+import '../providers/channel_provider.dart';
+import '../providers/vod_provider.dart';
+import '../services/tmdb_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
-import '../widgets/channel_card.dart';
+import '../widgets/channel_list_tile.dart';
+import 'details_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
   final void Function(Channel) onChannelTap;
+
   const FavoritesScreen({super.key, required this.onChannelTap});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChannelProvider>(builder: (context, provider, _) {
-      final favs = provider.favoriteChannels;
-      return CustomScrollView(slivers: [
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-          child: Row(children: [
-            Container(width: 44, height: 44, decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.15), borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.warning.withOpacity(0.3))), child: const Icon(Icons.star_rounded, color: AppColors.warning, size: 22)),
-            const SizedBox(width: 14),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Mis Favoritos', style: AppTextStyles.headlineLarge),
-              Text('${favs.length} canal${favs.length != 1 ? "es" : ""} guardado${favs.length != 1 ? "s" : ""}', style: AppTextStyles.bodyMedium),
-            ]),
-          ]),
-        )),
-        if (favs.isEmpty)
-          const SliverFillRemaining(child: _EmptyFavorites())
-        else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            sliver: SliverGrid(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                final ch = favs[i];
-                return ChannelCard(channel: ch, onTap: () => onChannelTap(ch), onFavoriteToggle: () => context.read<ChannelProvider>().toggleFavorite(ch.id));
-              }, childCount: favs.length),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 0.78, crossAxisSpacing: 12, mainAxisSpacing: 12),
+    return DefaultTabController(
+      length: 2, // Dos pestañas: TV y VOD
+      child: Column(
+        children: [
+          // CABECERA Y TABS
+          Container(
+            padding: const EdgeInsets.only(top: 20),
+            color: AppColors.background,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Text('Mis Favoritos', style: AppTextStyles.headlineLarge),
+                ),
+                SizedBox(height: 16),
+                TabBar(
+                  indicatorColor: AppColors.accentViolet,
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.white54,
+                  dividerColor: Colors.transparent,
+                  tabs: [
+                    Tab(text: '📺 TV en Vivo'),
+                    Tab(text: '🍿 Catálogo'),
+                  ],
+                ),
+              ],
             ),
           ),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-      ]);
-    });
-  }
-}
 
-class _EmptyFavorites extends StatelessWidget {
-  const _EmptyFavorites();
-  @override
-  Widget build(BuildContext context) => Center(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 40), child: Column(mainAxisSize: MainAxisSize.min, children: [
-    Container(width: 80, height: 80, decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(20), border: Border.all(color: AppColors.border)), child: const Icon(Icons.star_border_rounded, size: 36, color: AppColors.textDisabled)),
-    const SizedBox(height: 20),
-    const Text('Sin favoritos aún', style: AppTextStyles.headlineMedium),
-    const SizedBox(height: 8),
-    const Text('Pulsa el ⭐ en cualquier canal para guardarlo aquí', style: AppTextStyles.bodyMedium, textAlign: TextAlign.center),
-  ])));
+          // CONTENIDO DE LAS PESTAÑAS
+          Expanded(
+            child: TabBarView(
+              children: [
+                // ── PESTAÑA 1: CANALES DE TV ──
+                Consumer<ChannelProvider>(
+                  builder: (context, provider, child) {
+                    final favorites = provider.favoriteChannels;
+                    if (favorites.isEmpty) {
+                      return _buildEmptyState('No tienes canales favoritos aún', Icons.tv_off_rounded);
+                    }
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: favorites.length,
+                      itemBuilder: (context, index) {
+                        final channel = favorites[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: ChannelListTile(
+                            channel: channel,
+                            onTap: () => onChannelTap(channel),
+                            onFavoriteToggle: () => provider.toggleFavorite(channel.id),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+
+                // ── PESTAÑA 2: PELÍCULAS Y SERIES ──
+                Consumer<VodProvider>(
+                  builder: (context, provider, child) {
+                    final favorites = provider.favorites;
+                    if (favorites.isEmpty) {
+                      return _buildEmptyState('No tienes películas o series favoritas', Icons.movie_filter_rounded);
+                    }
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(16),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        childAspectRatio: 0.65,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                      ),
+                      itemCount: favorites.length,
+                      itemBuilder: (context, index) {
+                        final item = favorites[index];
+                        final posterPath = item['poster_path'];
+
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => DetailsScreen(
+                                  tmdbId: item['id']!,
+                                  title: item['title']!,
+                                  type: item['type']!,
+                                  posterPath: posterPath!.isNotEmpty ? posterPath : null,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
+                                        color: AppColors.surface,
+                                        image: posterPath != null && posterPath.isNotEmpty
+                                            ? DecorationImage(
+                                          image: NetworkImage('${TmdbService.imageBaseUrl}$posterPath'),
+                                          fit: BoxFit.cover,
+                                        )
+                                            : null,
+                                      ),
+                                      child: posterPath == null || posterPath.isEmpty
+                                          ? const Center(child: Icon(Icons.movie, color: Colors.white54))
+                                          : null,
+                                    ),
+                                    // Indicador de tipo (Película o Serie)
+                                    Positioned(
+                                      top: 4, left: 4,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black87,
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          item['type'] == 'tv' ? 'SERIE' : 'PELI',
+                                          style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                item['title']!,
+                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                                maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Widget para mostrar un mensaje cuando no hay favoritos
+  Widget _buildEmptyState(String message, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 64, color: Colors.white24),
+          const SizedBox(height: 16),
+          Text(message, style: const TextStyle(color: Colors.white54, fontSize: 16)),
+        ],
+      ),
+    );
+  }
 }

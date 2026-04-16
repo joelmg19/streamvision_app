@@ -91,17 +91,21 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
   }
 
   void _bindPlayerStreams() {
-    _errorSub = _player.stream.error.listen((err) {
-      final errorStr = err.toString();
-      if (mounted && errorStr.isNotEmpty && errorStr != 'none' && !_hasError) {
-        _setErrorState('Stream no disponible.\nPuede estar caído o geobloqueado.');
-      }
-    });
+    // Silenciamos los errores inofensivos que arroja el IPTV al conectar
+    _errorSub = _player.stream.error.listen((err) {});
 
     _playingSub = _player.stream.playing.listen((_) {});
 
-    _videoParamsSub = _player.stream.videoParams.listen((_) {
+    _videoParamsSub = _player.stream.videoParams.listen((params) {
       if (!mounted) return;
+
+      // ── FILTRO DE SEGURIDAD ──
+      // Asegurarnos de que recibimos información real del video
+      try {
+        // En media_kit se usa 'w' en lugar de 'width'
+        if (params.w == null || params.w == 0) return;
+      } catch (_) {}
+
       if (!_hasVideoFrame || _isLoading) {
         _timeoutTimer?.cancel();
         setState(() {
@@ -148,7 +152,8 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
     }
 
     try {
-      _timeoutTimer = Timer(const Duration(seconds: 20), () {
+      // ── BAJAMOS EL TIMEOUT A 10 SEGUNDOS ──
+      _timeoutTimer = Timer(const Duration(seconds: 10), () {
         if (mounted && !_hasError) {
           if (!_hasVideoFrame) {
             if (_player.state.playing && !_recoveryAttempted) {
@@ -185,7 +190,9 @@ class _VideoPlayerSheetState extends State<VideoPlayerSheet> {
       });
 
       _timeoutTimer?.cancel();
-      _timeoutTimer = Timer(const Duration(seconds: 10), () {
+
+      // ── BAJAMOS EL TIMEOUT DE RECUPERACIÓN A 5 SEGUNDOS ──
+      _timeoutTimer = Timer(const Duration(seconds: 5), () {
         if (mounted && !_hasError && !_hasVideoFrame) {
           _setErrorState('No se pudo renderizar video para este stream.');
           _player.stop();
@@ -791,8 +798,8 @@ class _ErrorPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = AppColors.channelGradientStart(channel.id);
     return Container(
-      width: double.infinity,  // <--- ¡Esto fuerza a que ocupe todo el ancho!
-      height: double.infinity, // <--- ¡Esto fuerza a que ocupe todo el alto!
+      width: double.infinity,
+      height: double.infinity,
       decoration: BoxDecoration(
         color: Colors.black, // Fondo base sólido
         gradient: LinearGradient(
